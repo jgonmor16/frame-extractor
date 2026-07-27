@@ -1,0 +1,6 @@
+# Extracted output and input media
+frames/
+*.mp4
+*.mkv
+*.mov
+*.avi
