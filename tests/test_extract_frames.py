@@ -1,11 +1,20 @@
 """Tests for extract_frames."""
 
 import hashlib
+import sys
+import shutil
 from pathlib import Path
 
 import pytest
 
-from extract_frames import extract_frames
+from extract_frames import (
+    FFmpegExecutionError,
+    FFmpegNotFoundError,
+    InvalidTimeRangeError,
+    VideoFileError,
+    extract_frames,
+    main,
+)
 
 def _digest(path: Path) -> str:
     """Return the SHA-256 hex digest of a file's contents."""
@@ -46,7 +55,7 @@ def test_range_is_half_open(
     second = extract_frames(sample_video, tmp_path / "second", 1.0, 2.0)
     assert len(first) + len(second) == sample_frame_count
     
-def test_seek_is_frame_accuracte(
+def test_seek_is_frame_accurate(
     sample_video: Path,
     tmp_path: Path
 ) -> None:
@@ -84,3 +93,107 @@ def test_returns_sorted_zero_padded_paths(
         "frame_000002.png",
         "frame_000003.png",
     ]
+
+class TestFailureModes:
+    """Every expected failure raises a FrameExtractorError, not a traceback."""
+
+    def test_missing_video_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(VideoFileError, match="not found"):
+            extract_frames(tmp_path / "nope.mp4", tmp_path / "out")
+
+    @pytest.mark.parametrize(
+        ("start_time", "end_time"),
+        [
+            pytest.param(5.0, 1.0, id="end-before-start"),
+            pytest.param(1.0, 1.0, id="end-equals-start"),
+            pytest.param(-1.0, 1.0, id="negative-start"),
+        ],
+    )
+    def test_invalid_range_raises(
+        self, tmp_path: Path, start_time: float, end_time: float
+    ) -> None:
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        with pytest.raises(InvalidTimeRangeError):
+            extract_frames(placeholder, tmp_path / "out", start_time, end_time)
+
+    def test_missing_ffmpeg_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        monkeypatch.setattr(shutil, "which", lambda _name: None)
+        with pytest.raises(FFmpegNotFoundError, match="not found on PATH"):
+            extract_frames(placeholder, tmp_path / "out")
+
+    def test_unreadable_video_raises_with_stderr(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        broken = tmp_path / "broken.mp4"
+        broken.write_text("this is definitely not a video")
+        with pytest.raises(FFmpegExecutionError) as excinfo:
+            extract_frames(broken, tmp_path / "out")
+        assert excinfo.value.returncode != 0
+        assert excinfo.value.stderr, "ffmpeg's diagnosis should be captured"
+
+    def test_no_output_directory_left_behind_on_invalid_range(
+        self, tmp_path: Path
+    ) -> None:
+        """Validation happens before mkdir, so a rejected request creates nothing."""
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        output_dir = tmp_path / "out"
+        with pytest.raises(InvalidTimeRangeError):
+            extract_frames(placeholder, output_dir, 5.0, 1.0)
+        assert not output_dir.exists()
+
+class TestCommandLineInterface:
+    """main() turns exceptions into exit codes and stderr messages."""
+
+    def test_reports_error_without_traceback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "extract_frames.py",
+                str(tmp_path / "nope.mp4"),
+                str(tmp_path / "out")
+            ]
+        )
+        exit_code = main()
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        assert captured.err.startswith("error: ")
+        assert "Traceback" not in captured.err
+
+    def test_success_returns_zero(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "extract_frames.py",
+                str(sample_video),
+                str(tmp_path / "out"),
+                "--end", "0.5"
+            ]
+        )
+        exit_code = main()
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        assert "Extracted 5 frame(s)" in captured.out
+
+
+
