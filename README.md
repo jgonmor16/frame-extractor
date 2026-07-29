@@ -1,5 +1,7 @@
 # frame-extractor
 
+[![tests](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml/badge.svg)](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml)
+
 Extract every frame of a video within a given time range as individual
 PNG images, using ffmpeg.
 
@@ -69,10 +71,40 @@ frames/
 
 Numbering always restarts at `000001` for each run, regardless of `--start`.
 
+## Errors
+
+Failures print a single `error:` line to stderr and exit non-zero — no
+tracebacks.
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Frames extracted successfully |
+| `1` | The request or the environment was rejected (see below) |
+| `2` | Bad command-line usage, reported by `argparse` |
+
+What can go wrong, and what it looks like:
+
+```
+error: Video file not found: input.mp4
+error: --end (1.0) must be greater than --start (5.0)
+error: --start (99.0s) is at or past the end of the video (2.000s), so there is
+nothing to extract
+error: ffprobe could not read 'broken.mp4': ...
+error: ffmpeg and ffprobe were not found on PATH. Install ffmpeg with ...
+```
+
+When ffmpeg or ffprobe fails, its own diagnosis is printed beneath the summary
+line rather than discarded.
+
+Internally these are `FrameExtractorError` subclasses — `VideoFileError`,
+`InvalidTimeRangeError`, `FFmpegNotFoundError`, and `FFmpegExecutionError`
+— so a single `except FrameExtractorError` catches every expected failure.
+
 ## How it works
 
-The script builds a single ffmpeg invocation and runs it via `subprocess`.
-Three details are deliberate:
+The script validates the request, asks `ffprobe` how long the video is, then
+builds a single `ffmpeg` invocation and runs it via `subprocess`.
+Several details are deliberate:
 
 - **`-ss` is placed before `-i`**, so ffmpeg seeks on the input rather than
 decoding and discarding everything up to the start point. Since ffmpeg 2.1
@@ -84,9 +116,13 @@ position, which is a common source of clips that end in the wrong place.
 - **`-vsync 0`** passes every decoded frame straight through, so nothing is
 duplicated or dropped. The file count matches the source's real frame count
 for the range.
+- **`ffprobe` supplies the duration** so a start time past the end of the file
+is rejected outright. Without it, that case ran to completion, wrote nothing,
+and reported success.
 
 Omitting `--end` simply leaves `-t` off the command, so ffmpeg runs to the end
-of the file without the script needing to know the duration.
+of the file. An `--end` beyond the real duration needs no special handling
+either — ffmpeg stops at the end of the input.
 
 ## Testing
 
@@ -98,20 +134,16 @@ pytest
 ```
 
 The suite generates its own sample clip with ffmpeg's `testsrc` source, so
-there's no fixture video in the repository. If ffmpeg isn't installed, every
-test skips rather than fails.
+there's no fixture video in the repository. Tests covering argument validation
+run anywhere; those needing real decoding skip automatically if ffmpeg isn't
+installed.
+
+CI runs the same suite against Python 3.10 through 3.14 on every pull request.
 
 ## Known limitations
 
 This is an early version. Rough edges, in the order they're being addressed:
 
-- **Failures surface as Python tracebacks.** A missing input file or a missing
-ffmpeg binary raises `CalledProcessError` or `FileNotFoundError` rather than a
-readable message.
-- **An invalid range isn't caught.** `--start 5 --end 1` produces a negative
-duration and fails inside ffmpeg.
-- **A start time past the end of the video reports success**, having extracted
-zero frames — the script doesn't know how long the video is.
 - **PNG only.** No JPEG output or quality control.
 - **Reruns overwrite silently.** Extracting a shorter range into a directory
 that already holds frames leaves the surplus files behind.
