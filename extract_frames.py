@@ -52,20 +52,66 @@ def _validate_request(
             f"--end ({end_time}) must be greater than --start ({start_time}"
         )
 
-def _require_ffmpeg() -> str:
-    """Return path to ffmpwg binary.
+def _require_binaries() -> tuple[str, str]:
+    """Return path to ffmpeg and ffprobe binaries.
 
     Raises:
-        FFmpegNotFoundError: If ffmpeg is not on PATH, with install hints.
+        FFmpegNotFoundError: If either binay is missing, with install hints.
     """
     ffmpeg_path = shutil.which("ffmpeg")
-    if ffmpeg_path is None:
+    ffprobe_path = shutil.which("ffprobe")
+
+    missing = [
+        name
+        for name, path in (("ffmpeg", ffmpeg_path), ("ffprobe", ffprobe_path))
+        if path is None
+    ]
+
+
+    if missing:
         raise FFmpegNotFoundError(
-            "ffmpeg was not found on PATH. Install it with "
+            f"{' and '.join(missing)} was not found on PATH. Install it with "
             "`sudo apt install ffmpeg` on Debian/Ubuntu/WSL, or "
             "`brew install ffmpeg` on macOS."
         )
-    return ffmpeg_path
+
+    assert ffmpeg_path is not None and ffprobe_path is not None
+    return ffmpeg_path, ffprobe_path
+
+def _probe_duration(video_path: Path, ffprobe_path: str) -> float:
+    """Return the total duration of a video in seconds.
+
+    Raises:
+        VideoFileError: If ffprobe cannot read the file, or reports no usable
+        duration, which is the case for a corrupt or non-media file.
+    """
+    result = subprocess.run(
+        [
+            ffprobe_path,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        raise VideoFileError(
+            f"ffprobe could not read '{video_path}':\n{result.stderr.strip()}"
+        )
+
+    reported = result.stdout.strip()
+    try:
+        return float(reported)
+    except ValueError as exc:
+        raise VideoFileError(
+            f"ffprobe reported no usable duration for '{video_path}' "
+            f"(got {reported!r}); the file may be corrupt."
+        ) from exc
 
 def extract_frames(
     video_path: Path,
@@ -92,7 +138,14 @@ def extract_frames(
     FFmpegExecutionError: If ffmpeg exits non-zero.
     """
     _validate_request(video_path, start_time, end_time)
-    ffmpeg_path = _require_ffmpeg()
+    ffmpeg_path, ffprobe_path = _require_binaries()
+
+    duration = _probe_duration(video_path, ffprobe_path)
+    if start_time >= duration:
+        raise InvalidTimeRangeError(
+            f"--start ({start_time}s) is at or past the end of the video "
+            f"({duration:.3f}s), so there is nothing to extract"
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
 

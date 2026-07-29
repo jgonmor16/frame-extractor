@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import extract_frames as ef
 from extract_frames import (
     FFmpegExecutionError,
     FFmpegNotFoundError,
@@ -109,6 +110,7 @@ class TestFailureModes:
             pytest.param(-1.0, 1.0, id="negative-start"),
         ],
     )
+
     def test_invalid_range_raises(
         self, tmp_path: Path, start_time: float, end_time: float
     ) -> None:
@@ -126,15 +128,73 @@ class TestFailureModes:
         with pytest.raises(FFmpegNotFoundError, match="not found on PATH"):
             extract_frames(placeholder, tmp_path / "out")
 
-    def test_unreadable_video_raises_with_stderr(
+    def test_unreadable_video_raises(
         self, sample_video: Path, tmp_path: Path
     ) -> None:
         broken = tmp_path / "broken.mp4"
         broken.write_text("this is definitely not a video")
+        with pytest.raises(
+            VideoFileError,
+            match="ffprobe could not read"
+        ):
+            extract_frames(broken, tmp_path / "out")
+
+    def test_ffmpeg_failure_after_successful_probe(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the probe successd buf ffmpeg still fails, the error carries its
+        stderr.
+        """
+        broken = tmp_path / "broken.mp4"
+        broken.write_text("this is definitely not a video")
+        monkeypatch.setattr(
+            ef,
+            "_probe_duration",
+            lambda _path,
+            _ffprobe: 10.0)
+
         with pytest.raises(FFmpegExecutionError) as excinfo:
             extract_frames(broken, tmp_path / "out")
+
         assert excinfo.value.returncode != 0
         assert excinfo.value.stderr, "ffmpeg's diagnosis should be captured"
+
+    @pytest.mark.parametrize(
+        "start_time",
+        [
+            pytest.param(2.0, id="exactly-at-duration"),
+            pytest.param(99.0, id="far-past-end")
+        ]
+    )
+
+    def test_start_past_duration_raises(
+        self, sample_video: Path, tmp_path: Path, start_time: float
+    ) -> None:
+        """Last silent failure: this reported success with zero frames."""
+
+        with pytest.raises(
+            InvalidTimeRangeError,
+            match="past the end of the video"
+        ):
+            extract_frames(sample_video, tmp_path / "out", start_time)
+
+    def test_missing_ffprobe_reported_by_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A partial install names the binary that is actually missing."""
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name: None if name == "ffprobe" else "/usr/bin/ffmpeg"
+        )
+
+        with pytest.raises(FFmpegNotFoundError, match="ffprobe was not found"):
+            extract_frames(placeholder, tmp_path / "out")
 
     def test_no_output_directory_left_behind_on_invalid_range(
         self, tmp_path: Path
@@ -194,6 +254,3 @@ class TestCommandLineInterface:
 
         assert exit_code == 0
         assert "Extracted 5 frame(s)" in captured.out
-
-
-
