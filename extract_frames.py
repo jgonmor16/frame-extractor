@@ -1,4 +1,4 @@
-"""Extract every frame from a video.
+"""Extract every frame from a video within a time range, as individual images.
 
 Usage: python3 extract_frames.py VIDEO OUTPUT_DIR  [--start SECONDS]
 [--end SECONDS]
@@ -22,6 +22,9 @@ class VideoFileError(FrameExtractorError):
 class InvalidTimeRangeError(FrameExtractorError):
     """The requested [start, end) range is not usable."""
 
+class InvalidOutputOptionError(FrameExtractorError):
+    """The requested image format or quality is not usable."""
+
 class FFmpegExecutionError(FrameExtractorError):
     """ffmpeg ran but exited with a non-zero status."""
 
@@ -29,6 +32,33 @@ class FFmpegExecutionError(FrameExtractorError):
         super().__init__(message)
         self.returncode = returncode
         self.stderr = stderr
+
+SUPPORTED_FORMATS = ("png", "jpg")
+
+# ffmpeg's -q:v scale for the mjpeg encoder: 2 is best, 31 is worst. Values
+# outside this range are silently clamped rather than rejected, so they are
+# checked instead of being passed through.
+MIN_JPEG_QUALITY = 2
+MAX_JPEG_QUALITY = 31
+
+def _validate_output_options(image_format: str, jpeg_quality: int) -> None:
+    """Check the requestied image for format and quality
+
+    Raises:
+        InvalidOutputOptionError: If the format is unsupported, or the quality
+        falls outside ffmpeg's usable range
+    """
+    if image_format not in SUPPORTED_FORMATS:
+        raise InvalidOutputOptionError(
+            f"Unsupported format {image_format!r}; expected one of "
+            f"{', '.join(SUPPORTED_FORMATS)}"
+        )
+
+    if not MIN_JPEG_QUALITY <= jpeg_quality <= MAX_JPEG_QUALITY:
+        raise InvalidOutputOptionError(
+            f"--jpeg-quality must be between {MIN_JPEG_QUALITY} (best) and "
+            f"{MAX_JPEG_QUALITY} (worst), got {jpeg_quality}"
+        )
 
 def _validate_request(
     video_path: Path, start_time: float, end_time: float | None
@@ -118,15 +148,19 @@ def extract_frames(
     output_dir: Path,
     start_time: float = 0.0,
     end_time: float | None = None,
+    image_format: str = "png",
+    jpeg_quality: int = MIN_JPEG_QUALITY,
 ) -> list[Path]:
-    """Extract every frame of a video as PNG image within
-    [start_time, end_time).
+    """Extract every frame of a video as an image within [start_time, end_time).
 
     Args:
         video_path: Path to the source video file.
         output_dir: Directory to write frames to.
-        start_time: Time from when the extraction will begin.
-        end_time: Time when the frame extraction will end.
+        start_time: Time from when the extraction will begin, inclusive.
+        end_time: Time when the frame extraction will end, exclusive.
+        image_format: Output image format, either "png" or "jpg".
+        jpeg_quality: ffmpeg ``-q:v`` value for JPEG output, from 2 (best) to
+            31 (worst). Ignored for PNG, which is lossless.
 
     Returns:
         Sorted list of the extracted frames.
@@ -134,10 +168,12 @@ def extract_frames(
     Raises:
     VideoFileError: If the input video does not exist.
     InvalidTimeRangeError: If the requested range is negative or inverted.
+    InvalidOutputOptionError: If the format or JPEG quality is unusable.
     FFmpegNotFoundError: If ffmpeg is not installed.
     FFmpegExecutionError: If ffmpeg exits non-zero.
     """
     _validate_request(video_path, start_time, end_time)
+    _validate_output_options(image_format, jpeg_quality)
     ffmpeg_path, ffprobe_path = _require_binaries()
 
     duration = _probe_duration(video_path, ffprobe_path)
@@ -157,7 +193,9 @@ def extract_frames(
     ]
     if end_time is not None:
         command += ["-t", f"{end_time - start_time:.6f}"]
-    command += ["-vsync", "0", str(output_dir / "frame_%06d.png")]
+    if image_format == "jpg":
+        command += ["-q:v", str(jpeg_quality)]
+    command += ["-vsync", "0", str(output_dir / f"frame_%06d.{image_format}")]
 
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
@@ -166,7 +204,7 @@ def extract_frames(
             returncode=result.returncode,
             stderr=result.stderr.strip()
         )
-    return sorted(output_dir.glob("frame_*.png"))
+    return sorted(output_dir.glob(f"frame_*.{image_format}"))
 
 
 def main() -> int:
@@ -199,6 +237,21 @@ def main() -> int:
         default=None,
         help="End time in seconds, exclusive (default: end of video).",
     )
+    parser.add_argument(
+        "--format",
+        choices=SUPPORTED_FORMATS,
+        default="png",
+        help="Output image format (default: png).",
+    )
+    parser.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=MIN_JPEG_QUALITY,
+        help=(
+            f"JPEG quality from {MIN_JPEG_QUALITY} (best) to {MAX_JPEG_QUALITY}"
+            f" (worst); ignored for PNG (default: {MIN_JPEG_QUALITY})."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -206,7 +259,9 @@ def main() -> int:
             args.video,
             args.output_dir,
             start_time=args.start,
-            end_time=args.end
+            end_time=args.end,
+            image_format=args.format,
+            jpeg_quality=args.jpeg_quality,
         )
 
     except FFmpegExecutionError as exc:
@@ -221,7 +276,6 @@ def main() -> int:
 
     print(f"Extracted {len(frames)} frame(s) to '{args.output_dir}/'")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

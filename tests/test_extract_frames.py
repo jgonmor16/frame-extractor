@@ -11,6 +11,7 @@ import extract_frames as ef
 from extract_frames import (
     FFmpegExecutionError,
     FFmpegNotFoundError,
+    InvalidOutputOptionError,
     InvalidTimeRangeError,
     VideoFileError,
     extract_frames,
@@ -254,3 +255,177 @@ class TestCommandLineInterface:
 
         assert exit_code == 0
         assert "Extracted 5 frame(s)" in captured.out
+
+class TestOutputFormats:
+    """Format selection, quality control, and their validation."""
+
+    def test_png_is_the_default(
+        self,
+        sample_video: Path,
+        tmp_path: Path
+    ) -> None:
+        frames = extract_frames(sample_video, tmp_path / "out", 0.0, 0.5)
+        assert len(frames) == 5
+        assert all(f.suffix == ".png" for f in frames)
+
+    def test_jpeg_output_uses_jpg_extension(
+        self,
+        sample_video: Path,
+        tmp_path: Path
+    ) -> None:
+        frames = extract_frames(
+            sample_video,
+            tmp_path / "out",
+            0.0,
+            0.5,
+            image_format="jpg")
+        assert len(frames) == 5
+        assert all(f.suffix == ".jpg" for f in frames)
+        assert frames[0].name == "frame_000001.jpg"
+
+    def test_lower_quality_produces_smaller_files(
+        self,
+        sample_video: Path,
+        tmp_path: Path
+    ) -> None:
+        """A higher -q:v means worse quality, so the bytes on disk should
+        shrink.
+        """
+        best = extract_frames(
+            sample_video,
+            tmp_path / "best",
+            0.0,
+            0.5,
+            image_format="jpg",
+            jpeg_quality=2
+        )
+        worst = extract_frames(
+            sample_video,
+            tmp_path / "worst",
+            0.0,
+            0.5,
+            image_format="jpg",
+            jpeg_quality=31
+        )
+        assert sum(f.stat().st_size for f in worst) < sum(f.stat().st_size for f in best)
+
+    def test_quality_does_not_affect_png(
+        self,
+        sample_video: Path,
+        tmp_path: Path
+    ) -> None:
+        default = extract_frames(sample_video, tmp_path / "a", 0.0, 0.5)
+        explicit = extract_frames(
+            sample_video,
+            tmp_path / "b",
+            0.0,
+            0.5,
+            image_format="png",
+            jpeg_quality=31
+        )
+        assert [f.read_bytes() for f in default] == [f.read_bytes() for f in explicit]
+
+    @pytest.mark.parametrize(
+        "image_format",
+        [
+            pytest.param("bmp", id="unsupported-format"),
+            pytest.param("jpeg", id="jpg-spelled-out"),
+            pytest.param("PNG", id="wrong-case"),
+            pytest.param("", id="empty"),
+        ]
+    )
+
+    def test_invalid_format_raises(
+        self,
+        tmp_path: Path,
+        image_format: str
+    ) -> None:
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        with pytest.raises(
+            InvalidOutputOptionError,
+            match="Unsupported format"
+        ):
+            extract_frames(
+                placeholder,
+                tmp_path / "out",
+                image_format=image_format
+            )
+
+    @pytest.mark.parametrize(
+        "jpeg_quality",
+        [
+            pytest.param(1, id="just-below-min"),
+            pytest.param(0, id="zero"),
+            pytest.param(-5, id="negative"),
+            pytest.param(32, id="just-above-max"),
+            pytest.param(100, id="far-above-max"),
+        ]
+    )
+
+    def test_invalid_quality_raises(
+        self,
+        tmp_path: Path,
+        jpeg_quality: int
+    ) -> None:
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        with pytest.raises(
+            InvalidOutputOptionError,
+            match="jpeg-quality"
+        ):
+            extract_frames(
+                placeholder,
+                tmp_path / "out",
+                image_format="jpg",
+                jpeg_quality=jpeg_quality
+            )
+
+    def test_cli_accepts_format_and_quality(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "extract_frames.py",
+                str(sample_video),
+                str(tmp_path / "out"),
+                "--end", "0.5",
+                "--format", "jpg",
+                "--jpeg-quality", "10"
+            ]
+        )
+
+        assert main() == 0
+        assert "Extracted 5 frame(s)" in capsys.readouterr().out
+        assert sorted((tmp_path / "out").glob("*.jpg"))
+
+    def test_cli_rejects_unknown_format(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """argparse handles this one, exiting 2 before extract_frames is
+        reached.
+        """
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "extract_frames.py",
+                str(tmp_path / "x.mp4"),
+                str(tmp_path / "out"),
+                "--format",
+                "gif"
+            ]
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+        assert excinfo.value.code == 2
+
