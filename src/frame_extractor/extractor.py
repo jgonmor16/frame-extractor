@@ -1,7 +1,8 @@
 """Extract every frame from a video within a time range, as individual images.
 
-Usage: python3 extract_frames.py VIDEO OUTPUT_DIR  [--start SECONDS]
-[--end SECONDS]
+Usage: python3 -m frame_extractor.extractor VIDEO OUTPUT_DIR
+            [--start SECONDS] [--end SECONDS] [--format {png,jpg}]
+            [--jpeg-quality N] [--overwrite]
 """
 
 import argparse
@@ -10,38 +11,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-class FrameExtractorError(Exception):
-    """Base class for every error raised by this script."""
-
-
-class FFmpegNotFoundError(FrameExtractorError):
-    """The ffmpeg or ffprobe binary could not be found on PATH"""
-
-
-class VideoFileError(FrameExtractorError):
-    """The input video is missing."""
-
-
-class InvalidTimeRangeError(FrameExtractorError):
-    """The requested [start, end) range is not usable."""
-
-
-class InvalidOutputOptionError(FrameExtractorError):
-    """The requested image format or quality is not usable."""
-
-
-class OutputDirectoryError(FrameExtractorError):
-    """The output directory already holds frames from an earlier extraction."""
-
-
-class FFmpegExecutionError(FrameExtractorError):
-    """ffmpeg ran but exited with a non-zero status."""
-
-    def __init__(self, message: str, *, returncode: int, stderr: str) -> None:
-        super().__init__(message)
-        self.returncode = returncode
-        self.stderr = stderr
+from frame_extractor.exceptions import (
+    FFmpegExecutionError,
+    FFmpegNotFoundError,
+    FrameExtractorError,
+    InvalidOutputOptionError,
+    InvalidTimeRangeError,
+    OutputDirectoryError,
+    VideoFileError,
+)
 
 
 SUPPORTED_FORMATS = ("png", "jpg")
