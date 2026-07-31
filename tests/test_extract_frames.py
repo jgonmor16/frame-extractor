@@ -10,16 +10,15 @@ import pytest
 
 
 import frame_extractor.extractor as ef
-from frame_extractor.extractor import (
+from frame_extractor.exceptions import(
     FFmpegExecutionError,
     FFmpegNotFoundError,
     InvalidOutputOptionError,
     InvalidTimeRangeError,
     OutputDirectoryError,
     VideoFileError,
-    extract_frames,
-    main,
 )
+from frame_extractor.extractor import extract_frames, main
 
 
 def _digest(path: Path) -> str:
@@ -164,7 +163,7 @@ class TestFailureModes:
         broken.write_text("this is definitely not a video")
         monkeypatch.setattr(
             ef,
-            "_probe_duration",
+            "probe_duration",
             lambda _path,
             _ffprobe: 10.0)
 
