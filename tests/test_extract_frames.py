@@ -6,12 +6,11 @@ import shutil
 from pathlib import Path
 
 
-
 import pytest
 
 
-import extract_frames as ef
-from extract_frames import (
+import frame_extractor.extractor as ef
+from frame_extractor.extractor import (
     FFmpegExecutionError,
     FFmpegNotFoundError,
     InvalidOutputOptionError,
@@ -234,7 +233,7 @@ class TestCommandLineInterface:
             sys,
             "argv",
             [
-                "extract_frames.py",
+                "frame-extractor",
                 str(tmp_path / "nope.mp4"),
                 str(tmp_path / "out")
             ]
@@ -257,7 +256,7 @@ class TestCommandLineInterface:
             sys,
             "argv",
             [
-                "extract_frames.py",
+                "frame-extractor",
                 str(sample_video),
                 str(tmp_path / "out"),
                 "--end", "0.5"
@@ -406,7 +405,7 @@ class TestOutputFormats:
             sys,
             "argv",
             [
-                "extract_frames.py",
+                "frame-extractor",
                 str(sample_video),
                 str(tmp_path / "out"),
                 "--end", "0.5",
@@ -431,7 +430,7 @@ class TestOutputFormats:
             sys,
             "argv",
             [
-                "extract_frames.py",
+                "frame-extractor",
                 str(tmp_path / "x.mp4"),
                 str(tmp_path / "out"),
                 "--format",
@@ -566,7 +565,7 @@ class TestOverwriteGuard:
         extract_frames(sample_video, output_dir, 0.0, 0.5)
 
         base = [
-            "extract_frames.py",
+            "frame-extractor",
             str(sample_video),
             str(output_dir),
             "--end",

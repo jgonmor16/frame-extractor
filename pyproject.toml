@@ -1,3 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "frame-extractor"
+description = "Extract frames from a video within a time range, using ffmpeg."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# No third-party runtime dependencies: ffmpeg and ffprobe are external
+# binaries, checked for at runtime rather than installed by pip.
+dependencies = []
+# Sourced from frame_extractor.__version__ so the version lives in exactly
+# one place and cannot drift between the package and its metadata.
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.dynamic]
+version = { attr = "frame_extractor.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
-pythonpath = ["."]
 testpaths = ["tests"]
