@@ -104,6 +104,40 @@ def _prepare_output_directory(
     output_dir.mkdir(parents=True, exist_ok=True)
 
 
+def build_ffmpeg_command(
+    ffmpeg_path: str,
+    video_path: Path,
+    output_dir: Path,
+    start_time: float = 0.0,
+    end_time: float | None = None,
+    image_format: str = "png",
+    jpeg_quality: int = MIN_JPEG_QUALITY,
+) -> list[str]:
+    """Build the ddmpef argument list for one extraction.
+
+    Returns:
+        The complete argument list, ready for ``subprocess.run``
+    """
+    command = [
+        ffmpeg_path,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{start_time:.6f}",
+        "-i",
+        str(video_path),
+    ]
+
+    if end_time is not None:
+        command += ["-t", f"{end_time - start_time:.6f}"]
+    if image_format == "jpg":
+        command += ["-q:v", str(jpeg_quality)]
+    command += ["-y", "-vsync", "0", str(output_dir / f"frame_%06d.{image_format}")]
+
+    return command
+
+
 def extract_frames(
     video_path: Path,
     output_dir: Path,
@@ -150,21 +184,15 @@ def extract_frames(
 
     _prepare_output_directory(output_dir, image_format, overwrite)
 
-    command = [
+    command = build_ffmpeg_command(
         ffmpeg_path,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-ss",
-        f"{start_time:.6f}",
-        "-i",
-        str(video_path),
-    ]
-    if end_time is not None:
-        command += ["-t", f"{end_time - start_time:.6f}"]
-    if image_format == "jpg":
-        command += ["-q:v", str(jpeg_quality)]
-    command += ["-y", "-vsync", "0", str(output_dir / f"frame_%06d.{image_format}")]
+        video_path,
+        output_dir,
+        start_time,
+        end_time,
+        image_format,
+        jpeg_quality,
+    )
 
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
@@ -185,13 +213,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Extract frames from a video within a time range."
     )
+    parser.add_argument("video", type=Path, help="Path to the input video file.")
     parser.add_argument(
-        "video", type=Path, help="Path to the input video file."
-    )
-    parser.add_argument(
-        "output_dir",
-        type=Path,
-        help="Directory to write extracted frames to."
+        "output_dir", type=Path, help="Directory to write extracted frames to."
     )
     parser.add_argument(
         "--start",

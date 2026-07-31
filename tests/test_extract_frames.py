@@ -18,7 +18,11 @@ from frame_extractor.exceptions import(
     OutputDirectoryError,
     VideoFileError,
 )
-from frame_extractor.extractor import extract_frames, main
+from frame_extractor.extractor import(
+    build_ffmpeg_command,
+    extract_frames,
+    main
+)
 
 
 def _digest(path: Path) -> str:
@@ -578,3 +582,98 @@ class TestOverwriteGuard:
         monkeypatch.setattr(sys, "argv", [*base, "--overwrite"])
         assert main() == 0
         assert "Extracted 5 frame(s)" in capsys.readouterr().out
+
+
+class TestBuildFfmpegCommand:
+    """The command builder is pure, so these run withoout ffme installed."""
+
+    def test_seeks_on_the_input_not_the_output(self) -> None:
+        """-ss must precede -i, or the seek stops being fast and
+        frame-accurate.
+        """
+        command = build_ffmpeg_command(
+            "ffmpeg",
+            Path("in.mp4"),
+            Path("out"),
+            1.5
+        )
+        assert command.index("-ss") < command.index("-i")
+        assert command[command.index("-ss") + 1] == "1.500000"
+
+    def test_clip_length_is_a_duration_not_an_end_timestamp(self) -> None:
+        """-to would be read relative to the seek position; -t is
+        unambiguous.
+        """
+        command = build_ffmpeg_command(
+            "ffmpeg",
+            Path("in.mp4"),
+            Path("out"),
+            1.5,
+            4.0
+        )
+        assert "-to" not in command
+        assert "-t" in command
+        assert command[command.index("-t") + 1] == "2.500000"
+
+    def test_open_ended_range_omits_the_duration_flag(self) -> None:
+        command = build_ffmpeg_command(
+            "ffmpeg",
+            Path("in.mp4"),
+            Path("out"),
+            1.0,
+            None
+        )
+        assert "-t" not in command
+
+    @pytest.mark.parametrize(
+        ("image_format", "expected"),
+        [
+            pytest.param("png", False, id="png"),
+            pytest.param("jpg", True, id="jpg")
+        ],
+    )
+
+    def test_quality_flag_is_jpeg_only(
+        self,
+        image_format: str,
+        expected: bool
+    ) -> None:
+        command = build_ffmpeg_command(
+            "ffmpeg",
+            Path("in.mp4"),
+            Path("out"),
+            image_format=image_format,
+            jpeg_quality=7
+        )
+        assert ("-q:v" in command) is expected
+
+    def test_output_pattern_carries_the_chosen_extension(self) -> None:
+        command = build_ffmpeg_command(
+            "ffmpeg",
+            Path("in.mp4"),
+            Path("out"),
+            image_format="jpg",
+            jpeg_quality=7
+        )
+        assert command[-1] == str(Path("out") / "frame_%06d.jpg")
+
+    def test_frames_are_passed_through_unresampled(self) -> None:
+        """-vsync 0 is what keeps the frame count equal to the source's."""
+        command = build_ffmpeg_command("ffmpeg", Path("in.mp4"), Path("out"))
+        assert command[command.index("-vsync") + 1] == "0"
+
+    def test_never_prompts_on_an_existing_file(self) -> None:
+        command = build_ffmpeg_command("ffmpeg", Path("in.mp4"), Path("out"))
+        assert "-y" in command
+        assert "-n" not in command
+
+    def test_uses_the_resolved_binary_path(self) -> None:
+        command = build_ffmpeg_command(
+            "/opt/bin/ffmpeg",
+            Path("in.mp4"),
+            Path("out")
+        )
+        assert command[0] == "/opt/bin/ffmpeg"
+
+
+
