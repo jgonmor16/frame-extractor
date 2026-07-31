@@ -144,9 +144,6 @@ CI runs the same suite against Python 3.10 through 3.14 on every pull request.
 
 This is an early version. Rough edges, in the order they're being addressed:
 
-- **PNG only.** No JPEG output or quality control.
-- **Reruns overwrite silently.** Extracting a shorter range into a directory
-that already holds frames leaves the surplus files behind.
 - **Not installable.** It's a script to run, not a package to import.
 
 ## License
