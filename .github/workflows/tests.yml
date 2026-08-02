@@ -37,7 +37,7 @@ jobs:
           ffmpeg -version
 
       - name: Install test dependencies
-        run: pip install pytest
+        run: pip install -e ".[dev]"
 
       - name: Run tests
         run: pytest -v
