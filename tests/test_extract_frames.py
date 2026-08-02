@@ -10,19 +10,17 @@ import pytest
 
 
 import frame_extractor.extractor as ef
-from frame_extractor.exceptions import(
+from frame_extractor import(
     FFmpegExecutionError,
     FFmpegNotFoundError,
     InvalidOutputOptionError,
     InvalidTimeRangeError,
     OutputDirectoryError,
     VideoFileError,
-)
-from frame_extractor.extractor import(
-    build_ffmpeg_command,
     extract_frames,
-    main
 )
+from frame_extractor.cli import main
+from frame_extractor.extractor import build_ffmpeg_command
 
 
 def _digest(path: Path) -> str:

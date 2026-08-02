@@ -18,6 +18,9 @@ dynamic = ["version"]
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+[project.scripts]
+frame_extractor = "frame_extractor.cli:main"
+
 [tool.setuptools.dynamic]
 version = { attr = "frame_extractor.__version__" }
 
