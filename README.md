@@ -3,9 +3,8 @@
 [![tests](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml/badge.svg)](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml)
 
 Extract every frame of a video within a given time range as individual
-PNG or JPEG images, using ffmpeg.
-
-🚧 Work in progress.
+PNG or JPEG images, using ffmpeg. Usable as a command-line tool or as a Python
+library.
 
 ## Requirements
 
@@ -26,11 +25,27 @@ Check the install with `ffmpeg -version`.
 > On WSL, a Windows-side ffmpeg installation won't satisfy this — the Linux
 > package is what ends up on your `PATH`.
 
-## Usage
+There are no third-party Python dependencies.
+
+## Install
 
 ```bash
-python3 extract_frames.py VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
-                          [--format {png,jpg}] [--jpeg-quality N] [--overwrite]
+git clone https://github.com/jgonmor16/frame-extractor.git
+cd frame-extractor
+pip install .
+```
+
+For development, install in editable mode with the test dependencies:
+
+```bash
+pip install -e ".[dev]"
+```
+
+## Command-line usage
+
+```bash
+frame-extractor VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
+                [--format {png,jpg}] [--jpeg-quality N] [--overwrite]
 ```
 
 | Argument | Required | Default | Meaning |
@@ -47,23 +62,65 @@ python3 extract_frames.py VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
 
 ```bash
 # Every frame of the whole video
-python3 extract_frames.py input.mp4 frames/
+frame-extractor input.mp4 frames/
 
 # Five seconds, starting at ten
-python3 extract_frames.py input.mp4 frames/ --start 10 --end 15
+frame-extractor input.mp4 frames/ --start 10 --end 15
 
 # From the 30-second mark to the end
-python3 extract_frames.py input.mp4 frames/ --start 30
+frame-extractor input.mp4 frames/ --start 30
 
 # JPEG instead of PNG, trading fidelity for disk space
-python3 extract_frames.py input.mp4 frames/ --format jpg --jpeg-quality 10
+frame-extractor input.mp4 frames/ --format jpg --jpeg-quality 10
 
 # Re-extract a different range into a directory already holding frames
-python3 extract_frames.py input.mp4 frames/ --start 5 --end 8 --overwrite
+frame-extractor input.mp4 frames/ --start 5 --end 8 --overwrite
 ```
 
 The range is half-open — a frame landing exactly on `--end` is excluded, so
 `--start 0 --end 1` and `--start 1 --end 2` produce no overlap.
+
+## Library usage
+
+```python
+from pathlib import Path
+from frame_extractor import extract_frames, FrameExtractorError
+
+try:
+    frames = extract_frames(
+        Path("input.mp4"),
+        Path("frames"),
+        start_time=10.0,
+        end_time=15.0,
+        image_format="jpg",
+        jpeg_quality=10,
+    )
+except FrameExtractorError as exc:
+    print(f"extraction failed: {exc}")
+else:
+    print(f"wrote {len(frames)} frames, first is {frames[0].name}")
+```
+
+`extract_frames` returns a sorted `list[Path]`, so the frames come back in
+playback order and can be fed straight into whatever comes next.
+
+### Public API
+
+Everything below is importable from `frame_extractor` directly. Anything not
+listed is an implementation detail and may move between versions.
+
+| Name | |
+|---|---|
+| `extract_frames` | The extraction function |
+| `FrameExtractorError` | Base class — catch this to handle any expected failure |
+| `VideoFileError` | Input missing, or unreadable as media |
+| `InvalidTimeRangeError` | Range negative, inverted, or starting past the end |
+| `InvalidOutputOptionError` | Unsupported format, or quality out of range |
+| `OutputDirectoryError` | Output directory holds frames and `overwrite` is False |
+| `FFmpegNotFoundError` | ffmpeg or ffprobe missing from `PATH` |
+| `FFmpegExecutionError` | ffmpeg exited non-zero; carries `returncode` and `stderr` |
+| `SUPPORTED_FORMATS` | `("png", "jpg")` |
+| `MIN_JPEG_QUALITY` / `MAX_JPEG_QUALITY` | `2` and `31` |
 
 ## Output
 
@@ -120,15 +177,13 @@ error: ffmpeg and ffprobe were not found on PATH. Install ffmpeg with ...
 When ffmpeg or ffprobe fails, its own diagnosis is printed beneath the summary
 line rather than discarded.
 
-Internally these are `FrameExtractorError` subclasses — `VideoFileError`,
-`InvalidTimeRangeError`, `InvalidOutputOptionError`, `OutputDirectoryError`,
-`FFmpegNotFoundError`, and `FFmpegExecutionError` — so a single
+All of these are `FrameExtractorError` subclasses, so a single
 `except FrameExtractorError` catches every expected failure.
 
 ## How it works
 
-The script validates the request, asks `ffprobe` how long the video is, then
-builds a single `ffmpeg` invocation and runs it via `subprocess`.
+`frame_extractor` validates the request, asks `ffprobe` how long the video is,
+then builds a single `ffmpeg` invocation and runs it via `subprocess`.
 Several details are deliberate:
 
 - **`-ss` is placed before `-i`**, so ffmpeg seeks on the input rather than
@@ -155,25 +210,33 @@ Omitting `--end` simply leaves `-t` off the command, so ffmpeg runs to the end
 of the file. An `--end` beyond the real duration needs no special handling
 either — ffmpeg stops at the end of the input.
 
+### Layout
+
+```
+src/frame_extractor/
+├── __init__.py       public API re-exports
+├── cli.py            argument parsing and exit codes
+├── extractor.py      extraction logic; imports only subprocess
+├── ffmpeg_utils.py   binary discovery and duration probing
+└── exceptions.py     the FrameExtractorError hierarchy
+```
+
+The library holds no argparse, no stdout, and no exit codes — those belong to
+`cli.py`, which is itself just another consumer of the public API.
+
 ## Testing
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install pytest
+pip install -e ".[dev]"
 pytest
 ```
 
 The suite generates its own sample clip with ffmpeg's `testsrc` source, so
 there's no fixture video in the repository. Tests covering argument validation
-run anywhere; those needing real decoding skip automatically if ffmpeg isn't
-installed.
+and ffmpeg command construction run anywhere; those needing real decoding skip
+automatically if ffmpeg isn't installed.
 
 CI runs the same suite against Python 3.10 through 3.14 on every pull request.
-
-## Known limitations
-
-- **Not installable.** It's a script to run, not a package to import.
 
 ## License
 
