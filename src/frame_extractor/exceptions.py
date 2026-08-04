@@ -38,8 +38,8 @@ class FFmpegExecutionError(FrameExtractorError):
     """ffmpeg ran but exited with a non-zero status.
 
     Attributes:
-    returncode: The exit status ffmpeg reported.
-    stderr: Captured stderr, which carries ffmpeg's own diagnosis.
+        returncode: The exit status ffmpeg reported.
+        stderr: Captured stderr, which carries ffmpeg's own diagnosis.
     """
 
     def __init__(self, message: str, *, returncode: int, stderr: str) -> None:
