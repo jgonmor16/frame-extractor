@@ -17,7 +17,6 @@ from frame_extractor.exceptions import (
 )
 from frame_extractor.ffmpeg_utils import probe_duration, require_binaries
 
-
 SUPPORTED_FORMATS = ("png", "jpg")
 
 # ffmpeg's -q:v scale for the mjpeg encoder: 2 is best, 31 is worst. Values
@@ -28,7 +27,7 @@ MAX_JPEG_QUALITY = 31
 
 
 def _validate_output_options(image_format: str, jpeg_quality: int) -> None:
-    """Check the requestied image for format and quality
+    """Check the requested image format and quality.
 
     Raises:
         InvalidOutputOptionError: If the format is unsupported, or the quality
@@ -110,7 +109,13 @@ def build_ffmpeg_command(
     image_format: str = "png",
     jpeg_quality: int = MIN_JPEG_QUALITY,
 ) -> list[str]:
-    """Build the ddmpef argument list for one extraction.
+    """Build the ffmpeg argument list for one extraction.
+
+    ``-ss`` precedes ``-i`` so ffmpeg seeks on the input rather than
+    decoding and discarding everything before ``start_time``. The clip
+    length is a duration (``-t``), not an end timestamp (``-to``), which
+    ffmpeg would read relative to the seek position. ``-vsync 0`` passes
+    every decoded frame through, so none are duplicated or dropped
 
     Returns:
         The complete argument list, ready for ``subprocess.run``
@@ -130,7 +135,12 @@ def build_ffmpeg_command(
         command += ["-t", f"{end_time - start_time:.6f}"]
     if image_format == "jpg":
         command += ["-q:v", str(jpeg_quality)]
-    command += ["-y", "-vsync", "0", str(output_dir / f"frame_%06d.{image_format}")]
+    command += [
+        "-y",
+        "-vsync",
+        "0",
+        str(output_dir / f"frame_%06d.{image_format}"),
+    ]
 
     return command
 
@@ -199,5 +209,3 @@ def extract_frames(
             stderr=result.stderr.strip(),
         )
     return sorted(output_dir.glob(f"frame_*.{image_format}"))
-
-

@@ -15,7 +15,7 @@ def require_binaries() -> tuple[str, str]:
     """Return path to ffmpeg and ffprobe binaries.
 
     Raises:
-    FFmpegNotFoundError: If either binay is missing, with install hints.
+        FFmpegNotFoundError: If either binary is missing, with install hints.
     """
     ffmpeg_path = shutil.which("ffmpeg")
     ffprobe_path = shutil.which("ffprobe")
@@ -25,7 +25,6 @@ def require_binaries() -> tuple[str, str]:
         for name, path in (("ffmpeg", ffmpeg_path), ("ffprobe", ffprobe_path))
         if path is None
     ]
-
 
     if missing:
         raise FFmpegNotFoundError(
@@ -58,7 +57,7 @@ def probe_duration(video_path: Path, ffprobe_path: str) -> float:
             str(video_path),
         ],
         capture_output=True,
-        text=True
+        text=True,
     )
     if result.returncode != 0:
         raise VideoFileError(

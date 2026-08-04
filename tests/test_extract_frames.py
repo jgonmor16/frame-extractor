@@ -1,16 +1,14 @@
 """Tests for extract_frames."""
 
 import hashlib
-import sys
 import shutil
+import sys
 from pathlib import Path
-
 
 import pytest
 
-
 import frame_extractor.extractor as ef
-from frame_extractor import(
+from frame_extractor import (
     FFmpegExecutionError,
     FFmpegNotFoundError,
     InvalidOutputOptionError,
@@ -31,17 +29,15 @@ def _digest(path: Path) -> str:
 @pytest.mark.parametrize(
     ("start_time", "end_time", "expected_count"),
     [
-        pytest.param(0.0, None,  20, id="whole-video"),
-        pytest.param(1.0, None,  10, id="start-to-end"),
-        pytest.param(0.0, 1.0,   10, id="start-of-video"),
-        pytest.param(0.5, 1.5,   10, id="middle-of-video"),
-        pytest.param(1.5, 2.0,    5, id="end-of-video"),
-        pytest.param(0.0, 0.3,    3, id="very-short-range"),
+        pytest.param(0.0, None, 20, id="whole-video"),
+        pytest.param(1.0, None, 10, id="start-to-end"),
+        pytest.param(0.0, 1.0, 10, id="start-of-video"),
+        pytest.param(0.5, 1.5, 10, id="middle-of-video"),
+        pytest.param(1.5, 2.0, 5, id="end-of-video"),
+        pytest.param(0.0, 0.3, 3, id="very-short-range"),
         pytest.param(0.0, 999.0, 20, id="end-beyond-duration"),
     ],
 )
-
-
 def test_frame_count_for_range(
     sample_video: Path,
     tmp_path: Path,
@@ -50,26 +46,23 @@ def test_frame_count_for_range(
     expected_count: int,
 ) -> None:
     """The number of extracted frames matches the requested range"""
-    frames = extract_frames(sample_video, tmp_path / "out", start_time, end_time)
+    frames = extract_frames(
+        sample_video, tmp_path / "out", start_time, end_time
+    )
     assert len(frames) == expected_count
 
 
 def test_range_is_half_open(
-    sample_video: Path,
-    tmp_path: Path,
-    sample_frame_count: int
+    sample_video: Path, tmp_path: Path, sample_frame_count: int
 ) -> None:
     """The frame at exactly end_time is excluded, so adjacent ranges do not
     overlap"""
     first = extract_frames(sample_video, tmp_path / "first", 0.0, 1.0)
     second = extract_frames(sample_video, tmp_path / "second", 1.0, 2.0)
     assert len(first) + len(second) == sample_frame_count
-    
 
-def test_seek_is_frame_accurate(
-    sample_video: Path,
-    tmp_path: Path
-) -> None:
+
+def test_seek_is_frame_accurate(sample_video: Path, tmp_path: Path) -> None:
     """Seeking to 1.0s yields the same image as frame 11 of a full extraction.
 
     This is the important one: a keyframe-only seek would return a nearby but
@@ -81,8 +74,7 @@ def test_seek_is_frame_accurate(
 
 
 def test_creates_missing_output_directory(
-    sample_video: Path,
-    tmp_path: Path
+    sample_video: Path, tmp_path: Path
 ) -> None:
     """Nested output directories are created rather than raising"""
     output_dir = tmp_path / "does" / "not" / "exist"
@@ -123,7 +115,6 @@ class TestFailureModes:
             pytest.param(-1.0, 1.0, id="negative-start"),
         ],
     )
-
     def test_invalid_range_raises(
         self, tmp_path: Path, start_time: float, end_time: float
     ) -> None:
@@ -146,28 +137,21 @@ class TestFailureModes:
     ) -> None:
         broken = tmp_path / "broken.mp4"
         broken.write_text("this is definitely not a video")
-        with pytest.raises(
-            VideoFileError,
-            match="ffprobe could not read"
-        ):
+        with pytest.raises(VideoFileError, match="ffprobe could not read"):
             extract_frames(broken, tmp_path / "out")
 
     def test_ffmpeg_failure_after_successful_probe(
         self,
         sample_video: Path,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """If the probe successd buf ffmpeg still fails, the error carries its
+        """If the probe succeeds but ffmpeg still fails, the error carries its
         stderr.
         """
         broken = tmp_path / "broken.mp4"
         broken.write_text("this is definitely not a video")
-        monkeypatch.setattr(
-            ef,
-            "probe_duration",
-            lambda _path,
-            _ffprobe: 10.0)
+        monkeypatch.setattr(ef, "probe_duration", lambda _path, _ffprobe: 10.0)
 
         with pytest.raises(FFmpegExecutionError) as excinfo:
             extract_frames(broken, tmp_path / "out")
@@ -179,18 +163,16 @@ class TestFailureModes:
         "start_time",
         [
             pytest.param(2.0, id="exactly-at-duration"),
-            pytest.param(99.0, id="far-past-end")
-        ]
+            pytest.param(99.0, id="far-past-end"),
+        ],
     )
-
     def test_start_past_duration_raises(
         self, sample_video: Path, tmp_path: Path, start_time: float
     ) -> None:
         """Last silent failure: this reported success with zero frames."""
 
         with pytest.raises(
-            InvalidTimeRangeError,
-            match="past the end of the video"
+            InvalidTimeRangeError, match="past the end of the video"
         ):
             extract_frames(sample_video, tmp_path / "out", start_time)
 
@@ -203,7 +185,7 @@ class TestFailureModes:
         monkeypatch.setattr(
             shutil,
             "which",
-            lambda name: None if name == "ffprobe" else "/usr/bin/ffmpeg"
+            lambda name: None if name == "ffprobe" else "/usr/bin/ffmpeg",
         )
 
         with pytest.raises(FFmpegNotFoundError, match="ffprobe was not found"):
@@ -212,7 +194,7 @@ class TestFailureModes:
     def test_no_output_directory_left_behind_on_invalid_range(
         self, tmp_path: Path
     ) -> None:
-        """Validation happens before mkdir, so a rejected request creates nothing."""
+        """Validation runs before mkdir, so a rejection creates nothing."""
         placeholder = tmp_path / "placeholder.mp4"
         placeholder.touch()
         output_dir = tmp_path / "out"
@@ -228,7 +210,7 @@ class TestCommandLineInterface:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str]
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setattr(
             sys,
@@ -236,8 +218,8 @@ class TestCommandLineInterface:
             [
                 "frame-extractor",
                 str(tmp_path / "nope.mp4"),
-                str(tmp_path / "out")
-            ]
+                str(tmp_path / "out"),
+            ],
         )
         exit_code = main()
         captured = capsys.readouterr()
@@ -260,8 +242,9 @@ class TestCommandLineInterface:
                 "frame-extractor",
                 str(sample_video),
                 str(tmp_path / "out"),
-                "--end", "0.5"
-            ]
+                "--end",
+                "0.5",
+            ],
         )
         exit_code = main()
         captured = capsys.readouterr()
@@ -274,33 +257,24 @@ class TestOutputFormats:
     """Format selection, quality control, and their validation."""
 
     def test_png_is_the_default(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         frames = extract_frames(sample_video, tmp_path / "out", 0.0, 0.5)
         assert len(frames) == 5
         assert all(f.suffix == ".png" for f in frames)
 
     def test_jpeg_output_uses_jpg_extension(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         frames = extract_frames(
-            sample_video,
-            tmp_path / "out",
-            0.0,
-            0.5,
-            image_format="jpg")
+            sample_video, tmp_path / "out", 0.0, 0.5, image_format="jpg"
+        )
         assert len(frames) == 5
         assert all(f.suffix == ".jpg" for f in frames)
         assert frames[0].name == "frame_000001.jpg"
 
     def test_lower_quality_produces_smaller_files(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         """A higher -q:v means worse quality, so the bytes on disk should
         shrink.
@@ -311,7 +285,7 @@ class TestOutputFormats:
             0.0,
             0.5,
             image_format="jpg",
-            jpeg_quality=2
+            jpeg_quality=2,
         )
         worst = extract_frames(
             sample_video,
@@ -319,14 +293,14 @@ class TestOutputFormats:
             0.0,
             0.5,
             image_format="jpg",
-            jpeg_quality=31
+            jpeg_quality=31,
         )
-        assert sum(f.stat().st_size for f in worst) < sum(f.stat().st_size for f in best)
+        worst_bytes = sum(f.stat().st_size for f in worst)
+        best_bytes = sum(f.stat().st_size for f in best)
+        assert worst_bytes < best_bytes
 
     def test_quality_does_not_affect_png(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         default = extract_frames(sample_video, tmp_path / "a", 0.0, 0.5)
         explicit = extract_frames(
@@ -335,9 +309,11 @@ class TestOutputFormats:
             0.0,
             0.5,
             image_format="png",
-            jpeg_quality=31
+            jpeg_quality=31,
         )
-        assert [f.read_bytes() for f in default] == [f.read_bytes() for f in explicit]
+        assert [f.read_bytes() for f in default] == [
+            f.read_bytes() for f in explicit
+        ]
 
     @pytest.mark.parametrize(
         "image_format",
@@ -346,24 +322,18 @@ class TestOutputFormats:
             pytest.param("jpeg", id="jpg-spelled-out"),
             pytest.param("PNG", id="wrong-case"),
             pytest.param("", id="empty"),
-        ]
+        ],
     )
-
     def test_invalid_format_raises(
-        self,
-        tmp_path: Path,
-        image_format: str
+        self, tmp_path: Path, image_format: str
     ) -> None:
         placeholder = tmp_path / "placeholder.mp4"
         placeholder.touch()
         with pytest.raises(
-            InvalidOutputOptionError,
-            match="Unsupported format"
+            InvalidOutputOptionError, match="Unsupported format"
         ):
             extract_frames(
-                placeholder,
-                tmp_path / "out",
-                image_format=image_format
+                placeholder, tmp_path / "out", image_format=image_format
             )
 
     @pytest.mark.parametrize(
@@ -374,25 +344,19 @@ class TestOutputFormats:
             pytest.param(-5, id="negative"),
             pytest.param(32, id="just-above-max"),
             pytest.param(100, id="far-above-max"),
-        ]
+        ],
     )
-
     def test_invalid_quality_raises(
-        self,
-        tmp_path: Path,
-        jpeg_quality: int
+        self, tmp_path: Path, jpeg_quality: int
     ) -> None:
         placeholder = tmp_path / "placeholder.mp4"
         placeholder.touch()
-        with pytest.raises(
-            InvalidOutputOptionError,
-            match="jpeg-quality"
-        ):
+        with pytest.raises(InvalidOutputOptionError, match="jpeg-quality"):
             extract_frames(
                 placeholder,
                 tmp_path / "out",
                 image_format="jpg",
-                jpeg_quality=jpeg_quality
+                jpeg_quality=jpeg_quality,
             )
 
     def test_cli_accepts_format_and_quality(
@@ -400,7 +364,7 @@ class TestOutputFormats:
         sample_video: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str]
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setattr(
             sys,
@@ -409,10 +373,13 @@ class TestOutputFormats:
                 "frame-extractor",
                 str(sample_video),
                 str(tmp_path / "out"),
-                "--end", "0.5",
-                "--format", "jpg",
-                "--jpeg-quality", "10"
-            ]
+                "--end",
+                "0.5",
+                "--format",
+                "jpg",
+                "--jpeg-quality",
+                "10",
+            ],
         )
 
         assert main() == 0
@@ -420,9 +387,7 @@ class TestOutputFormats:
         assert sorted((tmp_path / "out").glob("*.jpg"))
 
     def test_cli_rejects_unknown_format(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """argparse handles this one, exiting 2 before extract_frames is
         reached.
@@ -435,8 +400,8 @@ class TestOutputFormats:
                 str(tmp_path / "x.mp4"),
                 str(tmp_path / "out"),
                 "--format",
-                "gif"
-            ]
+                "gif",
+            ],
         )
 
         with pytest.raises(SystemExit) as excinfo:
@@ -448,9 +413,7 @@ class TestOverwriteGuard:
     """Re-running into a populated directory is an error unless asked for."""
 
     def test_rerun_without_overwrite_raises(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         output_dir = tmp_path / "out"
         extract_frames(sample_video, output_dir, 0.0, 0.5)
@@ -458,25 +421,17 @@ class TestOverwriteGuard:
             extract_frames(sample_video, output_dir, 0.0, 0.5)
 
     def test_rerun_with_overwrite_succeeds(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         output_dir = tmp_path / "out"
         extract_frames(sample_video, output_dir, 0.0, 0.5)
         frames = extract_frames(
-            sample_video,
-            output_dir,
-            0.0,
-            0.5,
-            overwrite=True
+            sample_video, output_dir, 0.0, 0.5, overwrite=True
         )
         assert len(frames) == 5
 
     def test_overwrite_removes_stale_frames(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         """A shorter second run must not leave the tail of the first behind."""
         output_dir = tmp_path / "out"
@@ -484,20 +439,14 @@ class TestOverwriteGuard:
         assert len(first) == 20
 
         second = extract_frames(
-            sample_video,
-            output_dir,
-            0.0,
-            1.0,
-            overwrite=True
+            sample_video, output_dir, 0.0, 1.0, overwrite=True
         )
 
         assert len(second) == 10
         assert len(sorted(output_dir.glob("frame_*.png"))) == 10
 
     def test_rejected_rerun_leaves_the_directory_untouched(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         output_dir = tmp_path / "out"
         original = extract_frames(sample_video, output_dir, 0.0, 0.5)
@@ -506,33 +455,25 @@ class TestOverwriteGuard:
         with pytest.raises(OutputDirectoryError):
             extract_frames(sample_video, output_dir, 1.0, 1.5)
 
-        assert [f.read_bytes()
-            for f in sorted(output_dir.glob("frame_*.png"))] == digests_before
+        assert [
+            f.read_bytes() for f in sorted(output_dir.glob("frame_*.png"))
+        ] == digests_before
 
     def test_a_different_format_is_not_blocked(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
-        """PNG frames aren't overwritten by a JPEG run, so it isn't an error.
-        """
+        """PNG frames aren't overwritten by a JPEG run, so it isn't an error."""
         output_dir = tmp_path / "out"
         extract_frames(sample_video, output_dir, 0.0, 0.5)
         frames = extract_frames(
-            sample_video,
-            output_dir,
-            0.0,
-            0.5,
-            image_format="jpg"
+            sample_video, output_dir, 0.0, 0.5, image_format="jpg"
         )
 
         assert len(frames) == 5
         assert len(sorted(output_dir.glob("frame_*.png"))) == 5
 
     def test_unrelated_files_are_preserved(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         """Only this run's own frame_*.<format> files are removed."""
         output_dir = tmp_path / "out"
@@ -541,13 +482,11 @@ class TestOverwriteGuard:
         notes.write_text("keep me")
 
         extract_frames(sample_video, output_dir, 0.0, 0.5, overwrite=True)
-        
+
         assert notes.read_text() == "keep me"
 
     def test_no_directory_created_when_rejected(
-        self,
-        sample_video: Path,
-        tmp_path: Path
+        self, sample_video: Path, tmp_path: Path
     ) -> None:
         """A rejected request must not leave an empty directory behind."""
         output_dir = tmp_path / "never"
@@ -560,7 +499,7 @@ class TestOverwriteGuard:
         sample_video: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str]
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         output_dir = tmp_path / "out"
         extract_frames(sample_video, output_dir, 0.0, 0.5)
@@ -570,7 +509,7 @@ class TestOverwriteGuard:
             str(sample_video),
             str(output_dir),
             "--end",
-            "0.5"
+            "0.5",
         ]
 
         monkeypatch.setattr(sys, "argv", base)
@@ -590,10 +529,7 @@ class TestBuildFfmpegCommand:
         frame-accurate.
         """
         command = build_ffmpeg_command(
-            "ffmpeg",
-            Path("in.mp4"),
-            Path("out"),
-            1.5
+            "ffmpeg", Path("in.mp4"), Path("out"), 1.5
         )
         assert command.index("-ss") < command.index("-i")
         assert command[command.index("-ss") + 1] == "1.500000"
@@ -603,11 +539,7 @@ class TestBuildFfmpegCommand:
         unambiguous.
         """
         command = build_ffmpeg_command(
-            "ffmpeg",
-            Path("in.mp4"),
-            Path("out"),
-            1.5,
-            4.0
+            "ffmpeg", Path("in.mp4"), Path("out"), 1.5, 4.0
         )
         assert "-to" not in command
         assert "-t" in command
@@ -615,11 +547,7 @@ class TestBuildFfmpegCommand:
 
     def test_open_ended_range_omits_the_duration_flag(self) -> None:
         command = build_ffmpeg_command(
-            "ffmpeg",
-            Path("in.mp4"),
-            Path("out"),
-            1.0,
-            None
+            "ffmpeg", Path("in.mp4"), Path("out"), 1.0, None
         )
         assert "-t" not in command
 
@@ -627,21 +555,18 @@ class TestBuildFfmpegCommand:
         ("image_format", "expected"),
         [
             pytest.param("png", False, id="png"),
-            pytest.param("jpg", True, id="jpg")
+            pytest.param("jpg", True, id="jpg"),
         ],
     )
-
     def test_quality_flag_is_jpeg_only(
-        self,
-        image_format: str,
-        expected: bool
+        self, image_format: str, expected: bool
     ) -> None:
         command = build_ffmpeg_command(
             "ffmpeg",
             Path("in.mp4"),
             Path("out"),
             image_format=image_format,
-            jpeg_quality=7
+            jpeg_quality=7,
         )
         assert ("-q:v" in command) is expected
 
@@ -651,7 +576,7 @@ class TestBuildFfmpegCommand:
             Path("in.mp4"),
             Path("out"),
             image_format="jpg",
-            jpeg_quality=7
+            jpeg_quality=7,
         )
         assert command[-1] == str(Path("out") / "frame_%06d.jpg")
 
@@ -667,11 +592,6 @@ class TestBuildFfmpegCommand:
 
     def test_uses_the_resolved_binary_path(self) -> None:
         command = build_ffmpeg_command(
-            "/opt/bin/ffmpeg",
-            Path("in.mp4"),
-            Path("out")
+            "/opt/bin/ffmpeg", Path("in.mp4"), Path("out")
         )
         assert command[0] == "/opt/bin/ffmpeg"
-
-
-
