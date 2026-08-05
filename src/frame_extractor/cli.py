@@ -65,6 +65,17 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--fps",
+        type=float,
+        default=None,
+        metavar="N",
+        help=(
+            "Frames to extract per second; fractional values are allowed, "
+            "so 0.5 gieces one frame every two seconds "
+            "(default: every frame)."
+        ),
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Replace frames from an earlier extraction in OUTPUT_DIR.",
@@ -80,6 +91,7 @@ def main() -> int:
             image_format=args.format,
             jpeg_quality=args.jpeg_quality,
             overwrite=args.overwrite,
+            fps=args.fps,
         )
 
     except FFmpegExecutionError as exc:
