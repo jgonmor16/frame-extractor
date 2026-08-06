@@ -5,6 +5,7 @@ Usage: python3 -m frame_extractor.extractor VIDEO OUTPUT_DIR
             [--jpeg-quality N] [--overwrite]
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -25,6 +26,18 @@ SUPPORTED_FORMATS = ("png", "jpg")
 MIN_JPEG_QUALITY = 2
 MAX_JPEG_QUALITY = 31
 
+# WIDTH:HEIGHT, where either side may be a positive integer or a marker
+# meaning "derive me from the other and the source aspect ratio". Strict by
+# design: the value is interpolated into ffmpeg's -vf argument, so an
+# unchecked comma would append filters the caller never asked for.
+_SCALE_DIMENSION = r"(auto|-1|-2|[1-9]\d*)"
+SCALE_PATTERN = re.compile(rf"^{_SCALE_DIMENSION}:{_SCALE_DIMENSION}$")
+
+# ffmpeg spells "derive this one" as -1, or -2 to round to an even number.
+# "auto" is accepted as a readable alias, and is the form the CLI documents:
+# a value starting with a dash cannot be passed as `--scale -1:240`.
+_DERIVED = {"auto": "-1", "-1": "-1", "-2": "-2"}
+
 
 def _validate_output_options(image_format: str, jpeg_quality: int) -> None:
     """Check the requested image format and quality.
@@ -43,6 +56,32 @@ def _validate_output_options(image_format: str, jpeg_quality: int) -> None:
         raise InvalidOutputOptionError(
             f"--jpeg-quality must be between {MIN_JPEG_QUALITY} (best) and "
             f"{MAX_JPEG_QUALITY} (worst), got {jpeg_quality}"
+        )
+
+
+def _validate_scale(scale: str | None) -> None:
+    """Check the requested output size.
+
+    Raises:
+        InvalidOutputOptionError: If scale is not WIDTH:HEIGHT, or if both
+        dimensions are derived, which resizes nothing.
+    """
+    if scale is None:
+        return
+
+    match = SCALE_PATTERN.match(scale)
+    if match is None:
+        raise InvalidOutputOptionError(
+            f"--scale must be WIDTH:HEIGHT, got {scale!r}. Use 'auto' for "
+            "either dimension to derive it from the other and the source "
+            "aspect ratio, for example '640:auto'."
+        )
+
+    if match.group(1) in _DERIVED and match.group(2) in _DERIVED:
+        raise InvalidOutputOptionError(
+            f"--scale {scale!r} derives both dimensions from each other, "
+            "which ffmpeg accepts but silently leaves the size unchanged. "
+            "Give a number for at least one of them."
         )
 
 
@@ -124,6 +163,7 @@ def build_ffmpeg_command(
     image_format: str = "png",
     jpeg_quality: int = MIN_JPEG_QUALITY,
     fps: float | None = None,
+    scale: str | None = None,
 ) -> list[str]:
     """Build the ffmpeg argument list for one extraction.
 
@@ -149,8 +189,17 @@ def build_ffmpeg_command(
 
     if end_time is not None:
         command += ["-t", f"{end_time - start_time:.6f}"]
+    filters = []
     if fps is not None:
-        command += ["-vf", f"fps={fps}"]
+        filters.append(f"fps={fps}")
+    if scale is not None:
+        width, height = scale.split(":")
+        filters.append(
+            f"scale={_DERIVED.get(width, width)}:"
+            f"{_DERIVED.get(height, height)}"
+        )
+    if filters:
+        command += ["-vf", ",".join(filters)]
     if image_format == "jpg":
         command += ["-q:v", str(jpeg_quality)]
     command += [
@@ -173,6 +222,7 @@ def extract_frames(
     jpeg_quality: int = MIN_JPEG_QUALITY,
     overwrite: bool = False,
     fps: float | None = None,
+    scale: str | None = None,
 ) -> list[Path]:
     """Extract every frame of a video as an image within [start_time, end_time).
 
@@ -189,6 +239,9 @@ def extract_frames(
         fps: Frames to extract per second of video. ``None`` extracts every
             frame. A rate above the source's own duplicates frames rather than
             failing, which is rarely wanted.
+        scale: Output size as ``"WIDTH:HEIGHT"``. Either side may be
+            ``"auto"`` to derive it from the other and the source aspect
+            ratio, as in ``"640:auto"``. ``None`` keeps the source size.
 
     Returns:
         Sorted list of the extracted frames.
@@ -204,6 +257,7 @@ def extract_frames(
     _validate_request(video_path, start_time, end_time)
     _validate_output_options(image_format, jpeg_quality)
     _validate_sampling(fps)
+    _validate_scale(scale)
     ffmpeg_path, ffprobe_path = require_binaries()
 
     duration = probe_duration(video_path, ffprobe_path)
@@ -224,6 +278,7 @@ def extract_frames(
         image_format=image_format,
         jpeg_quality=jpeg_quality,
         fps=fps,
+        scale=scale,
     )
 
     result = subprocess.run(command, capture_output=True, text=True)
