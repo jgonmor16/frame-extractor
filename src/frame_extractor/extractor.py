@@ -17,7 +17,6 @@ from frame_extractor.exceptions import (
 )
 from frame_extractor.ffmpeg_utils import probe_duration, require_binaries
 
-
 SUPPORTED_FORMATS = ("png", "jpg")
 
 # ffmpeg's -q:v scale for the mjpeg encoder: 2 is best, 31 is worst. Values
@@ -28,7 +27,7 @@ MAX_JPEG_QUALITY = 31
 
 
 def _validate_output_options(image_format: str, jpeg_quality: int) -> None:
-    """Check the requestied image for format and quality
+    """Check the requested image format and quality.
 
     Raises:
         InvalidOutputOptionError: If the format is unsupported, or the quality
@@ -44,6 +43,21 @@ def _validate_output_options(image_format: str, jpeg_quality: int) -> None:
         raise InvalidOutputOptionError(
             f"--jpeg-quality must be between {MIN_JPEG_QUALITY} (best) and "
             f"{MAX_JPEG_QUALITY} (worst), got {jpeg_quality}"
+        )
+
+
+def _validate_sampling(fps: float | None) -> None:
+    """Check the requested sampling rate.
+
+    ffmpeg rejects a non-positive rate with "The encoder timebase is not
+    set", which says nothing about the flag that caused it.
+
+    Raises:
+        InvalidOutputOptionError: If fps is zero or negative.
+    """
+    if fps is not None and fps <= 0:
+        raise InvalidOutputOptionError(
+            f"--fps must be greater than 0, got {fps}"
         )
 
 
@@ -109,8 +123,15 @@ def build_ffmpeg_command(
     end_time: float | None = None,
     image_format: str = "png",
     jpeg_quality: int = MIN_JPEG_QUALITY,
+    fps: float | None = None,
 ) -> list[str]:
-    """Build the ddmpef argument list for one extraction.
+    """Build the ffmpeg argument list for one extraction.
+
+    ``-ss`` precedes ``-i`` so ffmpeg seeks on the input rather than
+    decoding and discarding everything before ``start_time``. The clip
+    length is a duration (``-t``), not an end timestamp (``-to``), which
+    ffmpeg would read relative to the seek position. ``-vsync 0`` passes
+    every decoded frame through, so none are duplicated or dropped
 
     Returns:
         The complete argument list, ready for ``subprocess.run``
@@ -128,9 +149,16 @@ def build_ffmpeg_command(
 
     if end_time is not None:
         command += ["-t", f"{end_time - start_time:.6f}"]
+    if fps is not None:
+        command += ["-vf", f"fps={fps}"]
     if image_format == "jpg":
         command += ["-q:v", str(jpeg_quality)]
-    command += ["-y", "-vsync", "0", str(output_dir / f"frame_%06d.{image_format}")]
+    command += [
+        "-y",
+        "-vsync",
+        "0",
+        str(output_dir / f"frame_%06d.{image_format}"),
+    ]
 
     return command
 
@@ -143,6 +171,7 @@ def extract_frames(
     image_format: str = "png",
     jpeg_quality: int = MIN_JPEG_QUALITY,
     overwrite: bool = False,
+    fps: float | None = None,
 ) -> list[Path]:
     """Extract every frame of a video as an image within [start_time, end_time).
 
@@ -156,6 +185,9 @@ def extract_frames(
             31 (worst). Ignored for PNG, which is lossless.
         overwrite: Whether to replace frames from an earlier extraction in
             ``output_dir``. When False, their presence is an error.
+        fps: Frames to extract per second of video. ``None`` extracts every
+            frame. A rate above the source's own duplicates frames rather than
+            failing, which is rarely wanted.
 
     Returns:
         Sorted list of the extracted frames.
@@ -170,6 +202,7 @@ def extract_frames(
     """
     _validate_request(video_path, start_time, end_time)
     _validate_output_options(image_format, jpeg_quality)
+    _validate_sampling(fps)
     ffmpeg_path, ffprobe_path = require_binaries()
 
     duration = probe_duration(video_path, ffprobe_path)
@@ -189,6 +222,7 @@ def extract_frames(
         end_time,
         image_format,
         jpeg_quality,
+        fps,
     )
 
     result = subprocess.run(command, capture_output=True, text=True)
@@ -199,5 +233,3 @@ def extract_frames(
             stderr=result.stderr.strip(),
         )
     return sorted(output_dir.glob(f"frame_*.{image_format}"))
-
-

@@ -16,9 +16,11 @@ SAMPLE_DURATION = 2.0  # Seconds
 SAMPLE_FPS = 10
 SAMPLE_FRAME_COUNT = int(SAMPLE_DURATION * SAMPLE_FPS)
 
+
 @pytest.fixture(scope="session")
 def sample_frame_count() -> int:
     return SAMPLE_FRAME_COUNT
+
 
 @pytest.fixture(scope="session")
 def sample_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
