@@ -2,6 +2,7 @@
 
 import hashlib
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -24,6 +25,28 @@ from frame_extractor.extractor import build_ffmpeg_command
 def _digest(path: Path) -> str:
     """Return the SHA-256 hex digest of a file's contents."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def _dimensions(path: Path) -> tuple[int, int]:
+    """Return the pixel size of an image, via ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    width, height = result.stdout.strip().split(",")
+    return int(width), int(height)
 
 
 @pytest.mark.parametrize(
