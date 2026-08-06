@@ -595,3 +595,97 @@ class TestBuildFfmpegCommand:
             "/opt/bin/ffmpeg", Path("in.mp4"), Path("out")
         )
         assert command[0] == "/opt/bin/ffmpeg"
+
+
+class TestFrameSampling:
+    """--fps resamples instead of extracting every frame."""
+
+    @pytest.mark.parametrize(
+        ("fps", "expected_count"),
+        [
+            pytest.param(1.0, 2, id="one-per-second"),
+            pytest.param(2.0, 4, id="two-per-second"),
+            pytest.param(0.5, 1, id="one-per-two-seconds"),
+            pytest.param(10.0, 20, id="matching-source-rate"),
+        ],
+    )
+    def test_sampled_frame_count(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        fps: float,
+        expected_count: int,
+    ) -> None:
+        """The 2s fixture yields fps * 2 frames."""
+        frames = extract_frames(sample_video, tmp_path / "out", fps=fps)
+        assert len(frames) == expected_count
+
+    def test_sampling_applies_within_the_range(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        """The rate is per second of the extracted window, not the file."""
+        frames = extract_frames(
+            sample_video, tmp_path / "out", 0.5, 1.5, fps=2.0
+        )
+        assert len(frames) == 2
+
+    def test_default_extracts_every_frame(
+        self, sample_video: Path, tmp_path: Path, sample_frame_count: int
+    ) -> None:
+        """Omitting fps leaves the existing behaviour untouched."""
+        frames = extract_frames(sample_video, tmp_path / "out")
+        assert len(frames) == sample_frame_count
+
+    def test_sampling_combines_with_jpeg(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        frames = extract_frames(
+            sample_video, tmp_path / "out", fps=1.0, image_format="jpg"
+        )
+        assert len(frames) == 2
+        assert all(f.suffix == ".jpg" for f in frames)
+
+    @pytest.mark.parametrize(
+        "fps",
+        [
+            pytest.param(0.0, id="zero"),
+            pytest.param(-1.0, id="negative"),
+        ],
+    )
+    def test_non_positive_fps_raises(self, tmp_path: Path, fps: float) -> None:
+        """ffmpeg's own error names a timebase, not the flag at fault."""
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        with pytest.raises(InvalidOutputOptionError, match="--fps"):
+            extract_frames(placeholder, tmp_path / "out", fps=fps)
+
+    def test_filter_is_absent_by_default(self) -> None:
+        command = build_ffmpeg_command("ffmpeg", Path("in.mp4"), Path("out"))
+        assert "-vf" not in command
+
+    def test_filter_carries_the_requested_rate(self) -> None:
+        command = build_ffmpeg_command(
+            "ffmpeg", Path("in.mp4"), Path("out"), fps=0.5
+        )
+        assert command[command.index("-vf") + 1] == "fps=0.5"
+
+    def test_cli_accepts_fps(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "frame-extractor",
+                str(sample_video),
+                str(tmp_path / "out"),
+                "--fps",
+                "1",
+            ],
+        )
+        assert main() == 0
+        assert "Extracted 2 frame(s)" in capsys.readouterr().out

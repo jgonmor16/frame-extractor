@@ -2,8 +2,8 @@
 
 [![tests](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml/badge.svg)](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml)
 
-Extract every frame of a video within a given time range as individual
-PNG or JPEG images, using ffmpeg. Usable as a command-line tool or as a Python
+Extract every frame of a video within a given time range as individual PNG or
+JPEG images, using ffmpeg. Usable as a command-line tool or as a Python
 library.
 
 ## Requirements
@@ -45,7 +45,8 @@ pip install -e ".[dev]"
 
 ```bash
 frame-extractor VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
-                [--format {png,jpg}] [--jpeg-quality N] [--overwrite]
+                [--format {png,jpg}] [--jpeg-quality N] [--fps N]
+                [--overwrite]
 ```
 
 | Argument | Required | Default | Meaning |
@@ -56,6 +57,7 @@ frame-extractor VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
 | `--end` | no | end of video | End of the range in seconds, **exclusive** |
 | `--format` | no | `png` | Output image format: `png` or `jpg` |
 | `--jpeg-quality` | no | `2` | JPEG quality, `2` (best) to `31` (worst); ignored for PNG |
+| `--fps` | no | every frame | Frames to extract per second of video |
 | `--overwrite` | no | off | Replace frames from an earlier extraction |
 
 ### Examples
@@ -69,6 +71,12 @@ frame-extractor input.mp4 frames/ --start 10 --end 15
 
 # From the 30-second mark to the end
 frame-extractor input.mp4 frames/ --start 30
+
+# One frame per second instead of all of them
+frame-extractor input.mp4 frames/ --fps 1
+
+# One frame every four seconds, for a rough overview
+frame-extractor input.mp4 frames/ --fps 0.25
 
 # JPEG instead of PNG, trading fidelity for disk space
 frame-extractor input.mp4 frames/ --format jpg --jpeg-quality 10
@@ -94,6 +102,7 @@ try:
         end_time=15.0,
         image_format="jpg",
         jpeg_quality=10,
+        fps=1.0,
     )
 except FrameExtractorError as exc:
     print(f"extraction failed: {exc}")
@@ -140,6 +149,17 @@ Numbering always restarts at `000001` for each run, regardless of `--start`.
 PNG is the default because it's lossless, which is usually what you want for
 frame analysis. Use `--format jpg` when the frame count is large enough that
 disk space matters more than fidelity.
+
+### Sampling instead of every frame
+ 
+Extracting every frame is rarely what you want. Thirty seconds of 640x480
+footage at 30fps is 900 files and 31 MB; at `--fps 1` it is 30 files and
+1.1 MB. For dataset building, thumbnails, or scene overviews, a rate is
+usually closer to the real requirement than exhaustive extraction.
+
+Fractional rates work, so `--fps 0.25` gives one frame every four seconds. A
+rate above the source's own frame rate is allowed but duplicates frames
+rather than inventing new ones, which is rarely useful.
 
 ### Re-running into the same directory
 
