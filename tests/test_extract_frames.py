@@ -609,7 +609,6 @@ class TestFrameSampling:
             pytest.param(10.0, 20, id="matching-source-rate"),
         ],
     )
-
     def test_sampled_frame_count(
         self,
         sample_video: Path,
@@ -626,8 +625,8 @@ class TestFrameSampling:
     ) -> None:
         """The rate is per second of the extracted window, not the file."""
         frames = extract_frames(
-        sample_video, tmp_path / "out", 0.5, 1.5, fps=2.0
-    )
+            sample_video, tmp_path / "out", 0.5, 1.5, fps=2.0
+        )
         assert len(frames) == 2
 
     def test_default_extracts_every_frame(
@@ -653,10 +652,7 @@ class TestFrameSampling:
             pytest.param(-1.0, id="negative"),
         ],
     )
-
-    def test_non_positive_fps_raises(
-        self, tmp_path: Path, fps: float
-    ) -> None:
+    def test_non_positive_fps_raises(self, tmp_path: Path, fps: float) -> None:
         """ffmpeg's own error names a timebase, not the flag at fault."""
         placeholder = tmp_path / "placeholder.mp4"
         placeholder.touch()
@@ -664,9 +660,7 @@ class TestFrameSampling:
             extract_frames(placeholder, tmp_path / "out", fps=fps)
 
     def test_filter_is_absent_by_default(self) -> None:
-        command = build_ffmpeg_command(
-            "ffmpeg", Path("in.mp4"), Path("out")
-        )
+        command = build_ffmpeg_command("ffmpeg", Path("in.mp4"), Path("out"))
         assert "-vf" not in command
 
     def test_filter_carries_the_requested_rate(self) -> None:
@@ -695,4 +689,3 @@ class TestFrameSampling:
         )
         assert main() == 0
         assert "Extracted 2 frame(s)" in capsys.readouterr().out
-
