@@ -168,6 +168,7 @@ def extract_frames(
     output_dir: Path,
     start_time: float = 0.0,
     end_time: float | None = None,
+    *,
     image_format: str = "png",
     jpeg_quality: int = MIN_JPEG_QUALITY,
     overwrite: bool = False,
@@ -220,9 +221,9 @@ def extract_frames(
         output_dir,
         start_time,
         end_time,
-        image_format,
-        jpeg_quality,
-        fps,
+        image_format=image_format,
+        jpeg_quality=jpeg_quality,
+        fps=fps,
     )
 
     result = subprocess.run(command, capture_output=True, text=True)
