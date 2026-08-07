@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -24,17 +25,13 @@ jobs:
 
       # No ffmpeg step: neither tool executes the code.
       - name: Install the package and dev dependencies
-        run: pip install -e ".[dev]"
+        run: make install
 
-      - name: Lint
-        run: ruff check --output-format=github .
-
-      - name: Check formatting
-        run: ruff format --check .
+      - name: Lint and check formatting
+        run: make lint
 
       - name: Type check
-        run: mypy
-
+        run: make typecheck
 
   test:
     runs-on: ubuntu-latest
@@ -44,15 +41,15 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-        
-        # Installed explicitly rather than relying on the runner image
+
+      # Installed explicitly rather than relying on the runner image
       - name: Install ffmpeg
         run: |
           sudo apt-get update
@@ -60,7 +57,7 @@ jobs:
           ffmpeg -version
 
       - name: Install test dependencies
-        run: pip install -e ".[dev]"
+        run: make install
 
       - name: Run tests
-        run: pytest -v
+        run: make test
