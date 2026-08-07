@@ -76,6 +76,17 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--scale",
+        default=None,
+        metavar="W:H",
+        help=(
+            "Resize output to WIDTH:HEIGHT, for example 640:480. Use "
+            "'auto' for either side to derive it from the other and the "
+            "source aspect ratio, as in 640:auto "
+            "(default: the source size)."
+        ),
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Replace frames from an earlier extraction in OUTPUT_DIR.",
@@ -92,6 +103,7 @@ def main() -> int:
             jpeg_quality=args.jpeg_quality,
             overwrite=args.overwrite,
             fps=args.fps,
+            scale=args.scale,
         )
 
     except FFmpegExecutionError as exc:
