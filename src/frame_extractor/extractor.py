@@ -195,8 +195,7 @@ def build_ffmpeg_command(
     if scale is not None:
         width, height = scale.split(":")
         filters.append(
-            f"scale={_DERIVED.get(width, width)}:"
-            f"{_DERIVED.get(height, height)}"
+            f"scale={_DERIVED.get(width, width)}:{_DERIVED.get(height, height)}"
         )
     if filters:
         command += ["-vf", ",".join(filters)]
