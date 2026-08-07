@@ -26,6 +26,7 @@ def _digest(path: Path) -> str:
     """Return the SHA-256 hex digest of a file's contents."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
+
 def _dimensions(path: Path) -> tuple[int, int]:
     """Return the pixel size of an image, via ffprobe."""
     result = subprocess.run(
