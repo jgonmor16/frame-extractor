@@ -736,7 +736,6 @@ class TestFrameRateCeiling:
             pytest.param(10.0, id="exactly-the-source-rate"),
         ],
     )
-
     def test_rate_up_to_the_source_is_allowed(
         self, sample_video: Path, tmp_path: Path, fps: float
     ) -> None:
@@ -752,7 +751,6 @@ class TestFrameRateCeiling:
             pytest.param(120.0, id="far-above"),
         ],
     )
-
     def test_rate_above_the_source_raises(
         self, sample_video: Path, tmp_path: Path, fps: float
     ) -> None:

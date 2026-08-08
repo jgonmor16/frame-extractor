@@ -270,11 +270,11 @@ def extract_frames(
         and info.frame_rate is not None
         and fps > info.frame_rate * (1 + FPS_TOLERANCE)
     ):
-            raise InvalidOutputOptionError(
-                f"--fps ({fps}) is above the video's own rate of "
-                f"{info.frame_rate:.3f}, so ffmpeg would duplicate frames "
-                "rather than find new ones. Ask for that rate or less."
-            )
+        raise InvalidOutputOptionError(
+            f"--fps ({fps}) is above the video's own rate of "
+            f"{info.frame_rate:.3f}, so ffmpeg would duplicate frames "
+            "rather than find new ones. Ask for that rate or less."
+        )
 
     duration = info.duration
     if start_time >= duration:

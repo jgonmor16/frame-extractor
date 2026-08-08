@@ -105,9 +105,7 @@ def probe_video_info(video_path: Path, ffprobe_path: str) -> VideoInfo:
         )
 
     fields = dict(
-        line.split("=", 1)
-        for line in result.stdout.splitlines()
-        if "=" in line
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
     )
 
     reported = fields.get("duration", "")
