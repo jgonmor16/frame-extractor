@@ -2,7 +2,7 @@
 
 Usage: python3 -m frame_extractor.extractor VIDEO OUTPUT_DIR
             [--start SECONDS] [--end SECONDS] [--format {png,jpg}]
-            [--jpeg-quality N] [--overwrite]
+            [--jpeg-quality N] [--fps N] [--scale W:H] [--overwrite]
 """
 
 import re
@@ -16,7 +16,7 @@ from frame_extractor.exceptions import (
     OutputDirectoryError,
     VideoFileError,
 )
-from frame_extractor.ffmpeg_utils import probe_duration, require_binaries
+from frame_extractor.ffmpeg_utils import probe_video_info, require_binaries
 
 SUPPORTED_FORMATS = ("png", "jpg")
 
@@ -37,6 +37,10 @@ SCALE_PATTERN = re.compile(rf"^{_SCALE_DIMENSION}:{_SCALE_DIMENSION}$")
 # "auto" is accepted as a readable alias, and is the form the CLI documents:
 # a value starting with a dash cannot be passed as `--scale -1:240`.
 _DERIVED = {"auto": "-1", "-1": "-1", "-2": "-2"}
+
+# A request within this fraction of the source rate is treated as equal to
+# it, so 30 against NTSC's 29.97 is a rounding slip rather than an error.
+FPS_TOLERANCE = 0.01
 
 
 def _validate_output_options(image_format: str, jpeg_quality: int) -> None:
@@ -160,6 +164,7 @@ def build_ffmpeg_command(
     output_dir: Path,
     start_time: float = 0.0,
     end_time: float | None = None,
+    *,
     image_format: str = "png",
     jpeg_quality: int = MIN_JPEG_QUALITY,
     fps: float | None = None,
@@ -259,7 +264,19 @@ def extract_frames(
     _validate_scale(scale)
     ffmpeg_path, ffprobe_path = require_binaries()
 
-    duration = probe_duration(video_path, ffprobe_path)
+    info = probe_video_info(video_path, ffprobe_path)
+    if (
+        fps is not None
+        and info.frame_rate is not None
+        and fps > info.frame_rate * (1 + FPS_TOLERANCE)
+    ):
+        raise InvalidOutputOptionError(
+            f"--fps ({fps}) is above the video's own rate of "
+            f"{info.frame_rate:.3f}, so ffmpeg would duplicate frames "
+            "rather than find new ones. Ask for that rate or less."
+        )
+
+    duration = info.duration
     if start_time >= duration:
         raise InvalidTimeRangeError(
             f"--start ({start_time}s) is at or past the end of the video "
