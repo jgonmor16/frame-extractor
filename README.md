@@ -1,6 +1,7 @@
 # frame-extractor
 
 [![tests](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml/badge.svg)](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/frame-extractor-ffmpeg)](https://pypi.org/project/frame-extractor-ffmpeg/)
 
 Extract every frame of a video within a given time range as individual PNG or
 JPEG images, using ffmpeg. Usable as a command-line tool or as a Python
@@ -70,16 +71,24 @@ There are no third-party Python dependencies.
 ## Install
 
 ```bash
-git clone https://github.com/jgonmor16/frame-extractor.git
-cd frame-extractor
-pip install .
+pip install frame-extractor-ffmpeg
 ```
 
-For development, install in editable mode with the test dependencies:
+The distribution is named `frame-extractor-ffmpeg` because `frame-extractor`
+was already taken on PyPI by an unrelated package. It installs the
+`frame-extractor` command and the `frame_extractor` module, so only the
+`pip install` line carries the longer name.
+
+From a clone instead:
 
 ```bash
-pip install -e ".[dev]"
+git clone https://github.com/jgonmor16/frame-extractor.git
+cd frame-extractor
+make install
 ```
+
+`make install` is an editable install with the development dependencies.
+Run `make` on its own to see the other targets.
 
 ## Command-line usage
 
@@ -319,7 +328,7 @@ src/frame_extractor/
 ├── __init__.py       public API re-exports
 ├── cli.py            argument parsing and exit codes
 ├── extractor.py      extraction logic; no argparse, no stdout
-├── ffmpeg_utils.py   binary discovery and duration probing
+├── ffmpeg_utils.py   binary discovery and video probing
 └── exceptions.py     the FrameExtractorError hierarchy
 ```
 
@@ -329,9 +338,11 @@ The library holds no argparse, no stdout, and no exit codes — those belong to
 ## Testing
 
 ```bash
-pip install -e ".[dev]"
-pytest
+make install
+make test
 ```
+
+`make check` runs everything CI does: lint, formatting, types, and tests.
 
 The suite generates its own sample clip with ffmpeg's `testsrc` source, so
 there's no fixture video in the repository. Tests covering argument validation
@@ -339,6 +350,24 @@ and ffmpeg command construction run anywhere; those needing real decoding skip
 automatically if ffmpeg isn't installed.
 
 CI runs the same suite against Python 3.10 through 3.14 on every pull request.
+
+## Development
+
+The Makefile wraps the commands CI runs, so the two cannot drift apart:
+
+| Target | |
+|---|---|
+| `make install` | Install the package with its development dependencies |
+| `make test` | Run the test suite |
+| `make lint` | Report lint and formatting problems, changing nothing |
+| `make format` | Apply ruff's fixes and formatting |
+| `make typecheck` | Run mypy |
+| `make check` | Everything CI runs: lint, typecheck, test |
+| `make build` | Build the sdist and wheel into `dist/` |
+| `make clean` | Remove build artefacts and tool caches |
+
+Run `make check` before pushing. Releases are published to PyPI automatically
+when a GitHub release is created, via trusted publishing.
 
 ## License
 
