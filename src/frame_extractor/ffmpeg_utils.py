@@ -40,9 +40,9 @@ def require_binaries() -> tuple[str, str]:
 
 
 class VideoInfo(NamedTuple):
-    """What ffprobe call provides about a video.
+    """What a ffprobe call provides about a video.
 
-    Atributes:
+    Attributes:
         duration: Length in seconds
         frame_rate: Frames per second, or None when the container does not
             report a usable rate.
@@ -115,7 +115,7 @@ def probe_video_info(video_path: Path, ffprobe_path: str) -> VideoInfo:
         raise VideoFileError(
             f"ffprobe reported no usable duration for '{video_path}' "
             f"(got {reported!r}); the file may be corrupt or hold no video "
-            "stream.."
+            "stream."
         ) from exc
 
     return VideoInfo(

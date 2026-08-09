@@ -1,10 +1,51 @@
 # frame-extractor
 
 [![tests](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml/badge.svg)](https://github.com/jgonmor16/frame-extractor/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/frame-extractor-ffmpeg)](https://pypi.org/project/frame-extractor-ffmpeg/)
 
 Extract every frame of a video within a given time range as individual PNG or
 JPEG images, using ffmpeg. Usable as a command-line tool or as a Python
 library.
+
+## Why not just use ffmpeg?
+
+For a one-off extraction by someone who knows ffmpeg, this adds very little.
+The whole job is one command:
+
+```bash
+ffmpeg -ss 10 -i in.mp4 -t 5 -vsync 0 frames/f_%06d.png
+```
+
+**What it does add is a guard against ffmpeg's silent wrong answers.** Each of
+these exits **0** and produces output that looks reasonable:
+
+| What you ask for | ffmpeg | frame-extractor |
+|---|---|---|
+| `-ss 99` on a 2-second video | writes nothing, exits 0 | rejected, exit 1 |
+| `-q:v 100` (valid range is 2–31) | clamps to 31 silently | rejected, exit 1 |
+| re-extracting a shorter range | leaves the previous run's surplus frames alongside the new ones | refused unless `--overwrite`, which clears them first |
+| `scale=-1:-1` | resizes nothing | rejected, exit 1 |
+| `fps=20` on a 10fps source | 40 files, every second one a duplicate | rejected, exit 1 |
+
+None of these are misconfigurations — it's ffmpeg working as designed, being a
+low-level tool that does what it is told. Catching them needs a layer above:
+probe the duration first, range-check the quality, clear the directory before
+writing. That layer is what this is.
+
+The third row is the one that bites hardest. Frames from two different runs
+end up in one directory with nothing marking which is which, and the count you
+get back is wrong rather than merely untidy.
+
+**The other half is the Python API.** If you need frames from inside a program,
+the alternative is writing the subprocess wrapper yourself — and then
+rediscovering the five rows above one at a time.
+
+### Where it doesn't help
+
+- **Frames as arrays for ML or CV work** — use PyAV or TorchCodec. Writing
+PNGs only to read them back pays for an encode and a decode you don't need.
+- **Anything beyond extraction** — trimming, concatenating, re-encoding — is
+ffmpeg's job, and this deliberately doesn't grow into a general wrapper.
 
 ## Requirements
 
@@ -30,16 +71,24 @@ There are no third-party Python dependencies.
 ## Install
 
 ```bash
-git clone https://github.com/jgonmor16/frame-extractor.git
-cd frame-extractor
-pip install .
+pip install frame-extractor-ffmpeg
 ```
 
-For development, install in editable mode with the test dependencies:
+The distribution is named `frame-extractor-ffmpeg` because `frame-extractor`
+was already taken on PyPI by an unrelated package. It installs the
+`frame-extractor` command and the `frame_extractor` module, so only the
+`pip install` line carries the longer name.
+
+From a clone instead:
 
 ```bash
-pip install -e ".[dev]"
+git clone https://github.com/jgonmor16/frame-extractor.git
+cd frame-extractor
+make install
 ```
+
+`make install` is an editable install with the development dependencies.
+Run `make` on its own to see the other targets.
 
 ## Command-line usage
 
@@ -111,6 +160,7 @@ try:
         jpeg_quality=10,
         fps=1.0,
         scale="640:auto",
+        overwrite=False,
     )
 except FrameExtractorError as exc:
     print(f"extraction failed: {exc}")
@@ -175,15 +225,16 @@ footage at 30fps is 900 files and 31 MB; at `--fps 1` it is 30 files and
 usually closer to the real requirement than exhaustive extraction.
 
 Fractional rates work, so `--fps 0.25` gives one frame every four seconds. A
-rate above the source's own frame rate is allowed but duplicates frames
-rather than inventing new ones, which is rarely useful.
+rate above the source's own frame rate is rejected: ffmpeg would duplicate
+frames rather than find new ones. Asking for 30 against 29.97fps footage is
+fine, since a small tolerance treats that as a rounding difference.
 
 ### Resizing
 
 `--scale WIDTH:HEIGHT` resizes during extraction rather than in a second pass
 over the files, which for a model expecting a fixed input size saves decoding
 and re-encoding every frame.
- 
+
 Either side may be `auto` to derive it from the other and the source aspect
 ratio, so `--scale 640:auto` fixes the width and lets the height follow.
 Deriving both is rejected: ffmpeg accepts it and silently leaves the size
@@ -224,6 +275,9 @@ error: --jpeg-quality must be between 2 (best) and 31 (worst), got 100
 error: 'frames' already holds 20 file(s) matching 'frame_*.png'. Pass ...
 error: ffprobe could not read 'broken.mp4': ...
 error: ffmpeg and ffprobe were not found on PATH. Install ffmpeg with ...
+error: --fps (20.0) is above the video's own rate of 10.000 ...
+error: --scale must be WIDTH:HEIGHT, got 'abc'. Use 'auto' ...
+error: --scale 'auto:auto' derives both dimensions from each other ...
 ```
 
 When ffmpeg or ffprobe fails, its own diagnosis is printed beneath the summary
@@ -247,7 +301,7 @@ Several details are deliberate:
   position, which is a common source of clips that end in the wrong place.
 - **`-vsync 0`** passes every decoded frame straight through, so nothing is
   duplicated or dropped. The file count matches the source's real frame count
-  for the range.
+  for the range, when no rate is requested.
 - **`ffprobe` supplies the duration** so a start time past the end of the file
   is rejected outright. Without it, that case ran to completion, wrote nothing,
   and reported success.
@@ -273,8 +327,8 @@ either — ffmpeg stops at the end of the input.
 src/frame_extractor/
 ├── __init__.py       public API re-exports
 ├── cli.py            argument parsing and exit codes
-├── extractor.py      extraction logic; not argparse, no stdout
-├── ffmpeg_utils.py   binary discovery and duration probing
+├── extractor.py      extraction logic; no argparse, no stdout
+├── ffmpeg_utils.py   binary discovery and video probing
 └── exceptions.py     the FrameExtractorError hierarchy
 ```
 
@@ -284,9 +338,11 @@ The library holds no argparse, no stdout, and no exit codes — those belong to
 ## Testing
 
 ```bash
-pip install -e ".[dev]"
-pytest
+make install
+make test
 ```
+
+`make check` runs everything CI does: lint, formatting, types, and tests.
 
 The suite generates its own sample clip with ffmpeg's `testsrc` source, so
 there's no fixture video in the repository. Tests covering argument validation
@@ -294,6 +350,24 @@ and ffmpeg command construction run anywhere; those needing real decoding skip
 automatically if ffmpeg isn't installed.
 
 CI runs the same suite against Python 3.10 through 3.14 on every pull request.
+
+## Development
+
+The Makefile wraps the commands CI runs, so the two cannot drift apart:
+
+| Target | |
+|---|---|
+| `make install` | Install the package with its development dependencies |
+| `make test` | Run the test suite |
+| `make lint` | Report lint and formatting problems, changing nothing |
+| `make format` | Apply ruff's fixes and formatting |
+| `make typecheck` | Run mypy |
+| `make check` | Everything CI runs: lint, typecheck, test |
+| `make build` | Build the sdist and wheel into `dist/` |
+| `make clean` | Remove build artefacts and tool caches |
+
+Run `make check` before pushing. Releases are published to PyPI automatically
+when a GitHub release is created, via trusted publishing.
 
 ## License
 

@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "frame-extractor"
+name = "frame-extractor-ffmpeg"
 description = "Extract frames from a video within a time range, using ffmpeg."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,7 +16,7 @@ dependencies = []
 dynamic = ["version"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10", "build>=1.0"]
 
 [project.scripts]
 frame-extractor = "frame_extractor.cli:main"

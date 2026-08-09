@@ -1,7 +1,7 @@
 # Development commands. CI calls the same targets, so the workflow and
 # local development cannot drift apart.
 
-.PHONY: help install test lint format typecheck check clean
+.PHONY: help install test lint format typecheck check build clean
 
 # Keep this first so a bare `make` prints the available targets.
 help:  ## Show this help
@@ -26,6 +26,9 @@ typecheck:  ## Run the type checker
 	mypy
 
 check: lint typecheck test  ## Everything CI runs
+
+build: ## Build the sdist and wheel into dist/
+	python -m build
 
 clean:  ## Remove build artefacts and tool caches
 	rm -rf build dist src/*.egg-info
