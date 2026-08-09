@@ -241,8 +241,8 @@ def extract_frames(
         overwrite: Whether to replace frames from an earlier extraction in
             ``output_dir``. When False, their presence is an error.
         fps: Frames to extract per second of video. ``None`` extracts every
-            frame. A rate above the source's own duplicates frames rather than
-            failing, which is rarely wanted.
+            frame. A rate above the source's own is rejected, since ffmpeg
+            would duplicate frames rather than find new ones.
         scale: Output size as ``"WIDTH:HEIGHT"``. Either side may be
             ``"auto"`` to derive it from the other and the source aspect
             ratio, as in ``"640:auto"``. ``None`` keeps the source size.

@@ -12,3 +12,9 @@ __pycache__/
 
 # Tooling
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Build artefacts
+build/
+dist/
