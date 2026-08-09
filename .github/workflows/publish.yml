@@ -5,6 +5,7 @@ name: publish
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -17,13 +18,14 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Install the build tooling
+        run: pip install build twine
+
       - name: Build the sdist and wheel
         run: make build
 
       - name: Check the metadata renders on PyPI
-        run: |
-          pip install twine
-          twine check dist/*
+        run: twine check dist/*
 
       - uses: actions/upload-artifact@v4
         with:
