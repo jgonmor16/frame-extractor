@@ -71,8 +71,7 @@ def main() -> int:
         metavar="N",
         help=(
             "Frames to extract per second; fractional values are allowed, "
-            "so 0.5 gieces one frame every two seconds "
-            "(default: every frame)."
+            "so 0.5 gives one frame every two seconds (default: every frame)."
         ),
     )
     parser.add_argument(

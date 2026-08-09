@@ -20,6 +20,12 @@ from frame_extractor import (
 )
 from frame_extractor.cli import main
 from frame_extractor.extractor import build_ffmpeg_command
+from frame_extractor.ffmpeg_utils import (
+    VideoInfo,
+    _parse_frame_rate,
+    probe_video_info,
+    require_binaries,
+)
 
 
 def _digest(path: Path) -> str:
@@ -175,7 +181,11 @@ class TestFailureModes:
         """
         broken = tmp_path / "broken.mp4"
         broken.write_text("this is definitely not a video")
-        monkeypatch.setattr(ef, "probe_duration", lambda _path, _ffprobe: 10.0)
+        monkeypatch.setattr(
+            ef,
+            "probe_video_info",
+            lambda _path, _ffprobe: VideoInfo(duration=10.0, frame_rate=None),
+        )
 
         with pytest.raises(FFmpegExecutionError) as excinfo:
             extract_frames(broken, tmp_path / "out")
@@ -713,3 +723,112 @@ class TestFrameSampling:
         )
         assert main() == 0
         assert "Extracted 2 frame(s)" in capsys.readouterr().out
+
+
+class TestFrameRateCeiling:
+    """A rate above the source's own duplicates frames, so it is rejected."""
+
+    @pytest.mark.parametrize(
+        "fps",
+        [
+            pytest.param(1.0, id="well-below"),
+            pytest.param(9.0, id="just-below"),
+            pytest.param(10.0, id="exactly-the-source-rate"),
+        ],
+    )
+    def test_rate_up_to_the_source_is_allowed(
+        self, sample_video: Path, tmp_path: Path, fps: float
+    ) -> None:
+        """The fixture is 10fps."""
+        frames = extract_frames(sample_video, tmp_path / "out", fps=fps)
+        assert frames
+
+    @pytest.mark.parametrize(
+        "fps",
+        [
+            pytest.param(11.0, id="just-above"),
+            pytest.param(20.0, id="double"),
+            pytest.param(120.0, id="far-above"),
+        ],
+    )
+    def test_rate_above_the_source_raises(
+        self, sample_video: Path, tmp_path: Path, fps: float
+    ) -> None:
+        """ffmpeg would accept these and duplicate frames, exiting zero."""
+        with pytest.raises(InvalidOutputOptionError, match="above the video"):
+            extract_frames(sample_video, tmp_path / "out", fps=fps)
+
+    def test_a_rounding_slip_is_tolerated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Asking for 30 against NTSC's 29.97 is a slip, not a mistake."""
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        monkeypatch.setattr(
+            ef,
+            "probe_video_info",
+            lambda _path, _ffprobe: VideoInfo(duration=10.0, frame_rate=29.97),
+        )
+        # Reaches ffmpeg, which fails on the empty placeholder; the point
+        # is that the rate check did not reject it first.
+        with pytest.raises(FFmpegExecutionError):
+            extract_frames(placeholder, tmp_path / "out", fps=30.0)
+
+    def test_an_unknown_source_rate_skips_the_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Some containers report no usable rate; not the user's fault."""
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        monkeypatch.setattr(
+            ef,
+            "probe_video_info",
+            lambda _path, _ffprobe: VideoInfo(duration=10.0, frame_rate=None),
+        )
+        with pytest.raises(FFmpegExecutionError):
+            extract_frames(placeholder, tmp_path / "out", fps=1000.0)
+
+    def test_the_check_only_applies_to_sampling(
+        self, sample_video: Path, tmp_path: Path, sample_frame_count: int
+    ) -> None:
+        """Extracting every frame is never a rate request."""
+        frames = extract_frames(sample_video, tmp_path / "out")
+        assert len(frames) == sample_frame_count
+
+
+class TestProbeVideoInfo:
+    """One ffprobe call returns both the duration and the frame rate."""
+
+    def test_reports_duration_and_rate(self, sample_video: Path) -> None:
+        _, ffprobe_path = require_binaries()
+        info = probe_video_info(sample_video, ffprobe_path)
+        assert info.duration == pytest.approx(2.0, abs=0.05)
+        assert info.frame_rate == pytest.approx(10.0)
+
+    @pytest.mark.parametrize(
+        ("reported", "expected"),
+        [
+            pytest.param("30/1", 30.0, id="whole"),
+            pytest.param("30000/1001", 29.97, id="ntsc"),
+            pytest.param("24000/1001", 23.976, id="film-ntsc"),
+            pytest.param("0/0", None, id="unknown"),
+            pytest.param("", None, id="empty"),
+            pytest.param("abc", None, id="unparseable"),
+        ],
+    )
+    def test_fractional_rates_are_parsed(
+        self, reported: str, expected: float | None
+    ) -> None:
+        """ffprobe reports a fraction, so NTSC arrives as 30000/1001."""
+        result = _parse_frame_rate(reported)
+        if expected is None:
+            assert result is None
+        else:
+            assert result == pytest.approx(expected, abs=0.001)
+
+    def test_unreadable_file_still_raises(self, tmp_path: Path) -> None:
+        _, ffprobe_path = require_binaries()
+        broken = tmp_path / "broken.mp4"
+        broken.write_text("this is definitely not a video")
+        with pytest.raises(VideoFileError, match="ffprobe could not read"):
+            probe_video_info(broken, ffprobe_path)
