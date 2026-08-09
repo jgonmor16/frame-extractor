@@ -1,0 +1,57 @@
+name: publish
+
+# Runs when a GitHub release is published, so cutting the release and
+# shipping it are one action rather than two that can disagree.
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build the sdist and wheel
+        run: make build
+
+      - name: Check the metadata renders on PyPI
+        run: |
+          pip install twine
+          twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+
+    # Named so the deployment shows up on the repository page, and so a
+    # protection rule can be attached to it later if wanted.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/frame-extractor-ffmpeg
+
+    permissions:
+      # Mandatory for trusted publishing, and granted here rather than at
+      # the workflow level so the build job cannot mint a token.
+      id-token: write
+
+    # Nothing else belongs in this job: it downloads the artefact built
+    # above and uploads it, so the credential is exposed to as little as
+    # possible.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
