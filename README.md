@@ -179,6 +179,7 @@ what to do with each update is yours to decide:
 def show(progress):
     print(f"{progress.fraction:.0%} · {progress.frames_written} frames")
 
+
 extract_frames(video, out, fps=1.0, on_progress=show)
 ```
 
