@@ -27,7 +27,7 @@ jobs:
       - name: Check the metadata renders on PyPI
         run: twine check dist/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: distributions
           path: dist/
@@ -51,9 +51,13 @@ jobs:
     # above and uploads it, so the credential is exposed to as little as
     # possible.
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: distributions
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A re-run of an already-published version becomes a no-op
+          # rather than a 400, since PyPI refuses to replace a file.
+          skip-existing: true
