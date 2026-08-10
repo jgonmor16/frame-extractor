@@ -21,8 +21,10 @@ from frame_extractor import (
 from frame_extractor.cli import main
 from frame_extractor.extractor import build_ffmpeg_command
 from frame_extractor.ffmpeg_utils import (
+    Progress,
     VideoInfo,
     _parse_frame_rate,
+    _parse_progress_block,
     probe_video_info,
     require_binaries,
 )
@@ -832,3 +834,150 @@ class TestProbeVideoInfo:
         broken.write_text("this is definitely not a video")
         with pytest.raises(VideoFileError, match="ffprobe could not read"):
             probe_video_info(broken, ffprobe_path)
+
+
+class TestProgress:
+    """The Progress value reported to a callback."""
+
+    @pytest.mark.parametrize(
+        ("done", "total", "expected"),
+        [
+            pytest.param(0.0, 20.0, 0.0, id="start"),
+            pytest.param(5.0, 20.0, 0.25, id="quarter"),
+            pytest.param(20.0, 20.0, 1.0, id="complete"),
+            pytest.param(21.0, 20.0, 1.0, id="overshoot-clamped"),
+        ],
+    )
+    def test_fraction(self, done: float, total: float, expected: float) -> None:
+        assert Progress(done, total, 0).fraction == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        "total",
+        [pytest.param(None, id="unknown"), pytest.param(0.0, id="zero")],
+    )
+    def test_fraction_is_none_without_a_usable_total(
+        self, total: float | None
+    ) -> None:
+        """An open-ended or empty range has no meaningful percentage."""
+        assert Progress(5.0, total, 0).fraction is None
+
+    def test_out_time_us_is_read_not_out_time_ms(self) -> None:
+        """ffmpeg's out_time_ms is microseconds too, despite the name."""
+        block = {
+            "frame": "42",
+            "out_time_us": "2500000",
+            "out_time_ms": "2500000",
+            "progress": "continue",
+        }
+        parsed = _parse_progress_block(block, 10.0)
+        assert parsed is not None
+        assert parsed.seconds_done == pytest.approx(2.5)
+        assert parsed.frames_written == 42
+
+    def test_final_block_reports_the_range_as_covered(self) -> None:
+        """The last frame sits short of the end by up to one interval."""
+        block = {"frame": "50", "out_time_us": "9800000", "progress": "end"}
+        parsed = _parse_progress_block(block, 10.0)
+        assert parsed is not None
+        assert parsed.fraction == 1.0
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            pytest.param({"progress": "continue"}, id="no-position"),
+            pytest.param(
+                {"out_time_us": "N/A", "progress": "continue"},
+                id="unparseable-position",
+            ),
+        ],
+    )
+    def test_unusable_blocks_are_skipped(self, block: dict[str, str]) -> None:
+        assert _parse_progress_block(block, 10.0) is None
+
+
+class TestProgressReporting:
+    """extract_frames reports progress without printing anything itself."""
+
+    def test_callback_receives_updates(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        seen: list[Progress] = []
+        extract_frames(sample_video, tmp_path / "out", on_progress=seen.append)
+        assert seen
+
+    def test_updates_advance_and_finish(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        seen: list[Progress] = []
+        extract_frames(
+            sample_video, tmp_path / "out", 0.0, 1.0, on_progress=seen.append
+        )
+        positions = [update.seconds_done for update in seen]
+        assert positions == sorted(positions)
+        assert seen[-1].fraction == 1.0
+
+    def test_total_is_the_requested_range_not_the_file(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        """The 2s fixture, asked for one second, reports one second."""
+        seen: list[Progress] = []
+        extract_frames(
+            sample_video, tmp_path / "out", 0.5, 1.5, on_progress=seen.append
+        )
+        assert seen[-1].seconds_total == pytest.approx(1.0)
+
+    def test_frame_count_reaches_the_number_written(
+        self, sample_video: Path, tmp_path: Path, sample_frame_count: int
+    ) -> None:
+        seen: list[Progress] = []
+        frames = extract_frames(
+            sample_video, tmp_path / "out", on_progress=seen.append
+        )
+        assert len(frames) == sample_frame_count
+        assert seen[-1].frames_written == sample_frame_count
+
+    def test_extraction_is_unchanged_by_reporting(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        """The same frames come out whether or not a callback is given."""
+        plain = extract_frames(sample_video, tmp_path / "plain", 0.0, 0.5)
+        watched = extract_frames(
+            sample_video,
+            tmp_path / "watched",
+            0.0,
+            0.5,
+            on_progress=lambda _: None,
+        )
+        assert [p.name for p in plain] == [p.name for p in watched]
+        assert [p.read_bytes() for p in plain] == [
+            p.read_bytes() for p in watched
+        ]
+
+    def test_errors_still_carry_stderr(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Reading stdout for progress must not lose ffmpeg's diagnosis."""
+        broken = tmp_path / "broken.mp4"
+        broken.write_text("this is definitely not a video")
+        monkeypatch.setattr(
+            ef,
+            "probe_video_info",
+            lambda _path, _ffprobe: VideoInfo(duration=10.0, frame_rate=None),
+        )
+        with pytest.raises(FFmpegExecutionError) as excinfo:
+            extract_frames(broken, tmp_path / "out", on_progress=lambda _: None)
+        assert excinfo.value.stderr
+
+    def test_flag_is_absent_without_a_callback(self) -> None:
+        command = build_ffmpeg_command("ffmpeg", Path("in.mp4"), Path("out"))
+        assert "-progress" not in command
+
+    def test_flag_is_present_when_requested(self) -> None:
+        command = build_ffmpeg_command(
+            "ffmpeg", Path("in.mp4"), Path("out"), report_progress=True
+        )
+        assert command[command.index("-progress") + 1] == "pipe:1"
+        assert "-nostats" in command
