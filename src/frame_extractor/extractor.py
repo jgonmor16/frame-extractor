@@ -6,7 +6,7 @@ Usage: python3 -m frame_extractor.extractor VIDEO OUTPUT_DIR
 """
 
 import re
-import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from frame_extractor.exceptions import (
@@ -16,7 +16,12 @@ from frame_extractor.exceptions import (
     OutputDirectoryError,
     VideoFileError,
 )
-from frame_extractor.ffmpeg_utils import probe_video_info, require_binaries
+from frame_extractor.ffmpeg_utils import (
+    Progress,
+    probe_video_info,
+    require_binaries,
+    run_ffmpeg,
+)
 
 SUPPORTED_FORMATS = ("png", "jpg")
 
@@ -169,6 +174,7 @@ def build_ffmpeg_command(
     jpeg_quality: int = MIN_JPEG_QUALITY,
     fps: float | None = None,
     scale: str | None = None,
+    report_progress: bool = False,
 ) -> list[str]:
     """Build the ffmpeg argument list for one extraction.
 
@@ -186,6 +192,10 @@ def build_ffmpeg_command(
         "-hide_banner",
         "-loglevel",
         "error",
+    ]
+    if report_progress:
+        command += ["-progress", "pipe:1", "-nostats"]
+    command += [
         "-ss",
         f"{start_time:.6f}",
         "-i",
@@ -227,6 +237,7 @@ def extract_frames(
     overwrite: bool = False,
     fps: float | None = None,
     scale: str | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
 ) -> list[Path]:
     """Extract every frame of a video as an image within [start_time, end_time).
 
@@ -246,6 +257,8 @@ def extract_frames(
         scale: Output size as ``"WIDTH:HEIGHT"``. Either side may be
             ``"auto"`` to derive it from the other and the source aspect
             ratio, as in ``"640:auto"``. ``None`` keeps the source size.
+        on_progress: Called with a :class:`Progress`as ffmpeg decodes.
+            The library never prints; reporting is the caller's to do.
 
     Returns:
         Sorted list of the extracted frames.
@@ -295,9 +308,16 @@ def extract_frames(
         jpeg_quality=jpeg_quality,
         fps=fps,
         scale=scale,
+        report_progress=on_progress is not None,
     )
 
-    result = subprocess.run(command, capture_output=True, text=True)
+    requested = min(end_time, duration) if end_time else duration
+
+    result = run_ffmpeg(
+        command,
+        on_progress=on_progress,
+        seconds_total=max(requested - start_time, 0.0),
+    )
     if result.returncode != 0:
         raise FFmpegExecutionError(
             f"ffmpeg could not extract frames from '{video_path}'",

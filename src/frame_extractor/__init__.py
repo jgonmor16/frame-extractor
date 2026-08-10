@@ -32,12 +32,14 @@ from frame_extractor.extractor import (
     SUPPORTED_FORMATS,
     extract_frames,
 )
+from frame_extractor.ffmpeg_utils import Progress
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     # The one thing most callers need.
     "extract_frames",
+    "Progress",
     # Catch the base class to handle any expected failure; the rest are for
     # telling them apart.
     "FrameExtractorError",
