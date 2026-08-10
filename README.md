@@ -95,7 +95,7 @@ Run `make` on its own to see the other targets.
 ```bash
 frame-extractor VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
                 [--format {png,jpg}] [--jpeg-quality N] [--fps N]
-                [--scale W:H] [--overwrite]
+                [--scale W:H] [--no-progress] [--overwrite]
 ```
 
 | Argument | Required | Default | Meaning |
@@ -108,6 +108,7 @@ frame-extractor VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
 | `--jpeg-quality` | no | `2` | JPEG quality, `2` (best) to `31` (worst); ignored for PNG |
 | `--fps` | no | every frame | Frames to extract per second of video |
 | `--scale` | no | source size | Output size as `WIDTH:HEIGHT` |
+| `--no-progress` | no | off | Suppress the progress indicator |
 | `--overwrite` | no | off | Replace frames from an earlier extraction |
 
 ### Examples
@@ -170,6 +171,20 @@ else:
 
 `extract_frames` returns a sorted `list[Path]`, so the frames come back in
 playback order and can be fed straight into whatever comes next.
+
+Pass `on_progress` to follow a long extraction. The library never prints, so
+what to do with each update is yours to decide:
+
+```python
+def show(progress):
+    print(f"{progress.fraction:.0%} · {progress.frames_written} frames")
+
+
+extract_frames(video, out, fps=1.0, on_progress=show)
+```
+
+Each update carries `seconds_done`, `seconds_total`, `frames_written`, and a
+`fraction` property that is `None` when the total isn't known
 
 ### Public API
 
@@ -243,6 +258,21 @@ unchanged.
 ffmpeg's own `-1` and `-2` spellings work too, but note that a value starting
 with a dash has to be written `--scale=-1:240`, since argparse otherwise reads
 it as a flag. `auto` avoids that.
+
+### Progress
+
+A long extraction draws a single line on stderr, rewritten in place, and
+cleared before the summary:
+
+```
+52%  63 frame(s)
+```
+
+It appears only when stderr is a terminal, so piping or redirecting output
+suppresses it without a flag. `--no-progress` turns it off in a terminal too.
+
+The percentage is of the requested range, not the whole file, and comes from
+the duration already probed — nothing extra is decoded to produce it.
 
 ### Re-running into the same directory
 
