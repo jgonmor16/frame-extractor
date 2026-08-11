@@ -2,7 +2,8 @@
 
 Usage: python3 -m frame_extractor.extractor VIDEO OUTPUT_DIR
             [--start SECONDS] [--end SECONDS] [--format {png,jpg}]
-            [--jpeg-quality N] [--fps N] [--scale W:H] [--overwrite]
+            [--jpeg-quality N] [--fps N | --keyframes | --scenes THRESHOLD]
+            [--scale W:H] [--overwrite]
 """
 
 import re

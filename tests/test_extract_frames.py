@@ -1082,7 +1082,7 @@ class TestSceneSelection:
         with pytest.raises(InvalidOutputOptionError, match="--scenes"):
             extract_frames(
                 placeholder, tmp_path / "out", scene_threshold=threshold
-        )
+            )
 
     @pytest.mark.parametrize(
         "threshold",
@@ -1119,7 +1119,6 @@ class TestSelectionModesAreExclusive:
             ),
         ],
     )
-
     def test_combining_modes_raises(
         self, tmp_path: Path, kwargs: dict[str, object], expected: str
     ) -> None:
