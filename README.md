@@ -94,7 +94,8 @@ Run `make` on its own to see the other targets.
 
 ```bash
 frame-extractor VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
-                [--format {png,jpg}] [--jpeg-quality N] [--fps N]
+                [--format {png,jpg}] [--jpeg-quality N]
+                [--fps N | --keyframes | --scenes THRESHOLD]
                 [--scale W:H] [--no-progress] [--overwrite]
 ```
 
@@ -107,6 +108,8 @@ frame-extractor VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
 | `--format` | no | `png` | Output image format: `png` or `jpg` |
 | `--jpeg-quality` | no | `2` | JPEG quality, `2` (best) to `31` (worst); ignored for PNG |
 | `--fps` | no | every frame | Frames to extract per second of video |
+| `--keyframes` | no | off | Extract only the video's key frames |
+| `--scenes` | no | off | Extract only frames where the picture changes |
 | `--scale` | no | source size | Output size as `WIDTH:HEIGHT` |
 | `--no-progress` | no | off | Suppress the progress indicator |
 | `--overwrite` | no | off | Replace frames from an earlier extraction |
@@ -128,6 +131,12 @@ frame-extractor input.mp4 frames/ --fps 1
 
 # One frame every four seconds, for a rough overview
 frame-extractor input.mp4 frames/ --fps 0.25
+
+# Only the key frames: fastest way to see what is in a long file
+frame-extractor input.mp4 frames/ --keyframes
+ 
+# Only where the picture changes, to find the cuts
+frame-extractor input.mp4 frames/ --scenes 0.4
 
 # Resize to a fixed size, for a model expecting one
 frame-extractor input.mp4 frames/ --scale 224:224
@@ -184,7 +193,7 @@ extract_frames(video, out, fps=1.0, on_progress=show)
 ```
 
 Each update carries `seconds_done`, `seconds_total`, `frames_written`, and a
-`fraction` property that is `None` when the total isn't known
+`fraction` property that is `None` when the total isn't known.
 
 ### Public API
 
@@ -243,6 +252,30 @@ Fractional rates work, so `--fps 0.25` gives one frame every four seconds. A
 rate above the source's own frame rate is rejected: ffmpeg would duplicate
 frames rather than find new ones. Asking for 30 against 29.97fps footage is
 fine, since a small tolerance treats that as a rounding difference.
+
+### Choosing frames another way
+
+`--fps` samples at a rate you pick. Two other modes let the video decide
+instead, and only one selection mode can be used at a time.
+
+`--keyframes` extracts the frames the encoder stored as complete pictures.
+Everything between them is stored as differences, so skipping them means never
+decoding them at all — on a two-minute file that is 0.3 seconds against 27 for
+every frame. The trade is that their spacing is the encoder's choice, not
+yours: it might be one every two seconds or one every ten, and it varies
+within a file.
+
+`--scenes THRESHOLD` keeps frames where the picture differs from the one
+before it by more than the threshold, from 0 to 1. Around 0.4 catches clear
+cuts.
+
+Both return fewer frames than you might expect, and that is not a failure.
+Scene detection especially is a heuristic on pixel differences rather than a
+cut list: it misses cross-fades, gradual transitions, and cuts between shots
+that happen to be numerically similar. In a test clip of four solid colours it
+found two of the three changes. Check the threshold against your own footage
+before trusting it, and use `--fps` when you need a predictable number of
+frames.
 
 ### Resizing
 

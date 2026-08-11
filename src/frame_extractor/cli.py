@@ -92,7 +92,8 @@ def main() -> int:
             f" (worst); ignored for PNG (default: {MIN_JPEG_QUALITY})."
         ),
     )
-    parser.add_argument(
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
         "--fps",
         type=float,
         default=None,
@@ -100,6 +101,24 @@ def main() -> int:
         help=(
             "Frames to extract per second; fractional values are allowed, "
             "so 0.5 gives one frame every two seconds (default: every frame)."
+        ),
+    )
+    selection.add_argument(
+        "--keyframes",
+        action="store_true",
+        help=(
+            "Extract only key frames. Much faster, since the rest are "
+            "never decoded, but their spacing is the encoder's choice."
+        ),
+    )
+    selection.add_argument(
+        "--scenes",
+        type=float,
+        default=None,
+        metavar="THRESHOLD",
+        help=(
+            "Extract only frames where the picture changes by more than "
+            "THRESHOLD, from 0 to 1. Around 0.4 catches clear cuts."
         ),
     )
     parser.add_argument(
@@ -140,6 +159,8 @@ def main() -> int:
             jpeg_quality=args.jpeg_quality,
             overwrite=args.overwrite,
             fps=args.fps,
+            keyframes=args.keyframes,
+            scene_threshold=args.scenes,
             scale=args.scale,
             on_progress=_report if show_progress else None,
         )
