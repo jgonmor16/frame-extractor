@@ -981,3 +981,192 @@ class TestProgressReporting:
         )
         assert command[command.index("-progress") + 1] == "pipe:1"
         assert "-nostats" in command
+
+
+class TestKeyframeSelection:
+    """--keyframes decodes only key frames, so the rest cost nothing."""
+
+    def test_extracts_fewer_frames_than_the_whole_range(
+        self, sample_video: Path, tmp_path: Path, sample_frame_count: int
+    ) -> None:
+        frames = extract_frames(sample_video, tmp_path / "out", keyframes=True)
+        assert 0 < len(frames) < sample_frame_count
+
+    def test_respects_the_time_range(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        whole = extract_frames(sample_video, tmp_path / "all", keyframes=True)
+        part = extract_frames(
+            sample_video, tmp_path / "part", 0.0, 1.0, keyframes=True
+        )
+        assert len(part) <= len(whole)
+
+    def test_combines_with_scaling(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        """Selection and resizing answer different questions."""
+        frames = extract_frames(
+            sample_video, tmp_path / "out", keyframes=True, scale="32:auto"
+        )
+        assert frames
+        assert _dimensions(frames[0]) == (32, 32)
+
+    def test_flag_is_an_input_option(self) -> None:
+        """-skip_frame must precede -i, or the decoder never sees it."""
+        command = build_ffmpeg_command(
+            "ffmpeg", Path("in.mp4"), Path("out"), keyframes=True
+        )
+        assert command[command.index("-skip_frame") + 1] == "nokey"
+        assert command.index("-skip_frame") < command.index("-i")
+
+    def test_flag_is_absent_by_default(self) -> None:
+        command = build_ffmpeg_command("ffmpeg", Path("in.mp4"), Path("out"))
+        assert "-skip_frame" not in command
+
+
+class TestSceneSelection:
+    """--scenes keeps frames where the picture changes."""
+
+    def test_extracts_fewer_frames_than_the_whole_range(
+        self, sample_video: Path, tmp_path: Path, sample_frame_count: int
+    ) -> None:
+        """testsrc changes steadily, so a low threshold still selects some."""
+        frames = extract_frames(
+            sample_video, tmp_path / "out", scene_threshold=0.01
+        )
+        assert len(frames) < sample_frame_count
+
+    def test_a_higher_threshold_selects_no_more(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        loose = extract_frames(
+            sample_video, tmp_path / "loose", scene_threshold=0.01
+        )
+        strict = extract_frames(
+            sample_video, tmp_path / "strict", scene_threshold=0.9
+        )
+        assert len(strict) <= len(loose)
+
+    def test_filter_carries_the_threshold(self) -> None:
+        command = build_ffmpeg_command(
+            "ffmpeg", Path("in.mp4"), Path("out"), scene_threshold=0.4
+        )
+        assert command[command.index("-vf") + 1] == "select='gt(scene,0.4)'"
+
+    def test_selection_precedes_scaling_in_the_chain(self) -> None:
+        """Discard frames before spending work resizing them."""
+        command = build_ffmpeg_command(
+            "ffmpeg",
+            Path("in.mp4"),
+            Path("out"),
+            scale="160:auto",
+            scene_threshold=0.4,
+        )
+        assert command[command.index("-vf") + 1] == (
+            "select='gt(scene,0.4)',scale=160:-1"
+        )
+
+    @pytest.mark.parametrize(
+        "threshold",
+        [
+            pytest.param(1.5, id="above-one"),
+            pytest.param(-0.1, id="negative"),
+            pytest.param(100.0, id="far-above"),
+        ],
+    )
+    def test_threshold_outside_zero_to_one_raises(
+        self, tmp_path: Path, threshold: float
+    ) -> None:
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        with pytest.raises(InvalidOutputOptionError, match="--scenes"):
+            extract_frames(
+                placeholder, tmp_path / "out", scene_threshold=threshold
+            )
+
+    @pytest.mark.parametrize(
+        "threshold",
+        [pytest.param(0.0, id="zero"), pytest.param(1.0, id="one")],
+    )
+    def test_the_bounds_are_allowed(
+        self, sample_video: Path, tmp_path: Path, threshold: float
+    ) -> None:
+        extract_frames(
+            sample_video, tmp_path / "out", scene_threshold=threshold
+        )
+
+
+class TestSelectionModesAreExclusive:
+    """Each mode answers "which frames?" differently."""
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            pytest.param(
+                {"fps": 1.0, "keyframes": True},
+                "--fps and --keyframes",
+                id="fps-and-keyframes",
+            ),
+            pytest.param(
+                {"fps": 1.0, "scene_threshold": 0.4},
+                "--fps and --scenes",
+                id="fps-and-scenes",
+            ),
+            pytest.param(
+                {"keyframes": True, "scene_threshold": 0.4},
+                "--keyframes and --scenes",
+                id="keyframes-and-scenes",
+            ),
+        ],
+    )
+    def test_combining_modes_raises(
+        self, tmp_path: Path, kwargs: dict[str, object], expected: str
+    ) -> None:
+        placeholder = tmp_path / "placeholder.mp4"
+        placeholder.touch()
+        with pytest.raises(InvalidOutputOptionError, match=expected):
+            extract_frames(
+                placeholder,
+                tmp_path / "out",
+                **kwargs,  # type: ignore[arg-type]
+            )
+
+    def test_cli_rejects_combined_modes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """argparse catches this before extract_frames is reached."""
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "frame-extractor",
+                str(tmp_path / "x.mp4"),
+                str(tmp_path / "out"),
+                "--fps",
+                "1",
+                "--keyframes",
+            ],
+        )
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+        assert excinfo.value.code == 2
+
+    def test_cli_accepts_keyframes(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "frame-extractor",
+                str(sample_video),
+                str(tmp_path / "out"),
+                "--keyframes",
+            ],
+        )
+        assert main() == 0
+        assert "frame(s)" in capsys.readouterr().out
