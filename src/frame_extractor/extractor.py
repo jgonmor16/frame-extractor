@@ -43,6 +43,11 @@ SCALE_PATTERN = re.compile(rf"^{_SCALE_DIMENSION}:{_SCALE_DIMENSION}$")
 # a value starting with a dash cannot be passed as `--scale -1:240`.
 _DERIVED = {"auto": "-1", "-1": "-1", "-2": "-2"}
 
+# ffmpeg's scene score runs from 0 to 1. Anything above about 0.4 is a
+# clear cut; below 0.1 catches gradual change and a lot of noise.
+MIN_SCENE_THRESHOLD = 0.0
+MAX_SCENE_THRESHOLD = 1.0
+
 # A request within this fraction of the source rate is treated as equal to
 # it, so 30 against NTSC's 29.97 is a rounding slip rather than an error.
 FPS_TOLERANCE = 0.01
@@ -91,6 +96,44 @@ def _validate_scale(scale: str | None) -> None:
             f"--scale {scale!r} derives both dimensions from each other, "
             "which ffmpeg accepts but silently leaves the size unchanged. "
             "Give a number for at least one of them."
+        )
+
+
+def _validate_selection(
+    fps: float | None, keyframes: bool, scene_threshold: float | None
+) -> None:
+    """Check that at most one way of choosing frames was asked for.
+
+    Each mode answers "which frames?" differently, and ffmpeg would apply
+    whichever combination it was handed without saying that the request
+    was contradictory.
+
+    Raises:
+        InvalidOutputOptionError: If more than one mode is requested, or
+            the scene threshold falls outside 0 to 1.
+    """
+    requested = [
+        name
+        for name, given in (
+            ("--fps", fps is not None),
+            ("--keyframes", keyframes),
+            ("--scenes", scene_threshold is not None),
+        )
+        if given
+    ]
+    if len(requested) > 1:
+        raise InvalidOutputOptionError(
+            f"{' and '.join(requested)} each choose frames a different "
+            "way, so only one of them can be used at a time."
+        )
+
+    if scene_threshold is None:
+        return
+
+    if not MIN_SCENE_THRESHOLD <= scene_threshold <= MAX_SCENE_THRESHOLD:
+        raise InvalidOutputOptionError(
+            f"--scenes must be between {MIN_SCENE_THRESHOLD} and "
+            f"{MAX_SCENE_THRESHOLD}, got {scene_threshold}"
         )
 
 
@@ -173,6 +216,8 @@ def build_ffmpeg_command(
     image_format: str = "png",
     jpeg_quality: int = MIN_JPEG_QUALITY,
     fps: float | None = None,
+    keyframes: bool = False,
+    scene_threshold: float | None = None,
     scale: str | None = None,
     report_progress: bool = False,
 ) -> list[str]:
@@ -195,6 +240,8 @@ def build_ffmpeg_command(
     ]
     if report_progress:
         command += ["-progress", "pipe:1", "-nostats"]
+    if keyframes:
+        command += ["-skip_frame", "nokey"]
     command += [
         "-ss",
         f"{start_time:.6f}",
@@ -207,6 +254,8 @@ def build_ffmpeg_command(
     filters = []
     if fps is not None:
         filters.append(f"fps={fps}")
+    if scene_threshold is not None:
+        filters.append(f"select='gt(scene,{scene_threshold})'")
     if scale is not None:
         width, height = scale.split(":")
         filters.append(
@@ -236,6 +285,8 @@ def extract_frames(
     jpeg_quality: int = MIN_JPEG_QUALITY,
     overwrite: bool = False,
     fps: float | None = None,
+    keyframes: bool = False,
+    scene_threshold: float | None = None,
     scale: str | None = None,
     on_progress: Callable[[Progress], None] | None = None,
 ) -> list[Path]:
@@ -254,6 +305,12 @@ def extract_frames(
         fps: Frames to extract per second of video. ``None`` extracts every
             frame. A rate above the source's own is rejected, since ffmpeg
             would duplicate frames rather than find new ones.
+        keyframes: Extract only the video's key frames. Far faster than
+            decoding everything, since non-key frames are never decoded,
+            but their spacing is decided by the encoder rather than by you.
+        scene_threshold: Extract only frames where the picture changes by
+            more than this, from 0 to 1. Around 0.4 catches clear cuts.
+            Detection is a heuristic and misses gradual transitions.
         scale: Output size as ``"WIDTH:HEIGHT"``. Either side may be
             ``"auto"`` to derive it from the other and the source aspect
             ratio, as in ``"640:auto"``. ``None`` keeps the source size.
@@ -274,6 +331,7 @@ def extract_frames(
     _validate_request(video_path, start_time, end_time)
     _validate_output_options(image_format, jpeg_quality)
     _validate_sampling(fps)
+    _validate_selection(fps, keyframes, scene_threshold)
     _validate_scale(scale)
     ffmpeg_path, ffprobe_path = require_binaries()
 
@@ -307,6 +365,8 @@ def extract_frames(
         image_format=image_format,
         jpeg_quality=jpeg_quality,
         fps=fps,
+        keyframes=keyframes,
+        scene_threshold=scene_threshold,
         scale=scale,
         report_progress=on_progress is not None,
     )
