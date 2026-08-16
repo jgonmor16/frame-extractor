@@ -96,7 +96,8 @@ Run `make` on its own to see the other targets.
 frame-extractor VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
                 [--format {png,jpg}] [--jpeg-quality N]
                 [--fps N | --keyframes | --scenes THRESHOLD]
-                [--scale W:H] [--no-progress] [--overwrite]
+                [--scale W:H] [--timestamps] [--manifest CSV]
+                [--no-progress] [--overwrite]
 ```
 
 | Argument | Required | Default | Meaning |
@@ -111,6 +112,8 @@ frame-extractor VIDEO OUTPUT_DIR [--start SECONDS] [--end SECONDS]
 | `--keyframes` | no | off | Extract only the video's key frames |
 | `--scenes` | no | off | Extract only frames where the picture changes |
 | `--scale` | no | source size | Output size as `WIDTH:HEIGHT` |
+| `--no-progress` | no | off | Suppress the progress indicator |
+| `--manifest` | no | — | Write path, index, and timestamp as CSV |
 | `--no-progress` | no | off | Suppress the progress indicator |
 | `--overwrite` | no | off | Replace frames from an earlier extraction |
 
@@ -147,6 +150,9 @@ frame-extractor input.mp4 frames/ --scale 640:auto
 # JPEG instead of PNG, trading fidelity for disk space
 frame-extractor input.mp4 frames/ --format jpg --jpeg-quality 10
 
+# Record when each frame happened, as a CSV alongside the images
+frame-extractor input.mp4 frames/ --fps 1 --manifest frames.csv
+
 # Re-extract a different range into a directory already holding frames
 frame-extractor input.mp4 frames/ --start 5 --end 8 --overwrite
 ```
@@ -178,8 +184,24 @@ else:
     print(f"wrote {len(frames)} frames, first is {frames[0].name}")
 ```
 
-`extract_frames` returns a sorted `list[Path]`, so the frames come back in
-playback order and can be fed straight into whatever comes next.
+`extract_frames` returns a sorted `list[Frame]`, so the frames come back in
+playback order and can be fed straight into whatever comes next. Each `Frame`
+carries its `path`, its `index`, and its `timestamp`.
+
+> **Upgrading from 1.x:** the result used to be `list[Path]`. Add `.path`
+> where you were using an item as a path; filenames and every argument are
+> unchanged.
+
+Timestamps are `None` unless you ask for them, since recovering them costs an
+extra pass over the range:
+
+```python
+for frame in extract_frames(video, out, fps=1.0, timestamps=True):
+    print(f"{frame.index}  {frame.timestamp}s  {frame.path.name}")
+```
+
+With `--keyframes` or `--scenes` the spacing is uneven, so this is the only
+way to know when a frame happened.
 
 Pass `on_progress` to follow a long extraction. The library never prints, so
 what to do with each update is yours to decide:
@@ -219,6 +241,8 @@ extract_frames(video, out, 10.0, 15.0, fps=1.0, scale="640:auto")
 | `OutputDirectoryError` | Output directory holds frames and `overwrite` is False |
 | `FFmpegNotFoundError` | ffmpeg or ffprobe missing from `PATH` |
 | `FFmpegExecutionError` | ffmpeg exited non-zero; carries `returncode` and `stderr` |
+| `Frame` | One extracted frame: `path`, `index`, `timestamp` |
+| `Progress` | What an `on_progress` callback receives |
 | `SUPPORTED_FORMATS` | `("png", "jpg")` |
 | `MIN_JPEG_QUALITY` / `MAX_JPEG_QUALITY` | `2` and `31` |
 
@@ -307,6 +331,24 @@ suppresses it without a flag. `--no-progress` turns it off in a terminal too.
 The percentage is of the requested range, not the whole file, and comes from
 the duration already probed — nothing extra is decoded to produce it.
 
+### Timestamps
+
+`--timestamps` records where each frame sits in the source, and `--manifest
+frames.csv` writes the mapping out:
+
+```
+path,index,timestamp
+frames/frame_000001.png,0,5.0
+frames/frame_000002.png,1,6.0
+```
+
+It is off by default because it forces ffmpeg to report every frame it
+handles, which costs a pass over the range. `--manifest` implies it.
+
+The times come from the extraction itself rather than a separate probe, so
+they describe the frames that were actually written, including under
+`--keyframes` and `--scenes` where nothing else could tell you.
+
 ### Re-running into the same directory
 
 By default, extracting into a directory that already holds `frame_*` files of
@@ -379,6 +421,12 @@ Several details are deliberate:
 - **`--scale` is matched against a strict `WIDTH:HEIGHT` pattern**, because the
   value is interpolated into ffmpeg's `-vf` argument and an unchecked comma
   would append filters the caller never asked for.
+- **`--keyframes` is passed as an input option (`-skip_frame`)**, so the
+  decoder skips the other frames rather than producing them for a filter to
+  discard. Moving it after `-i` would still work and would lose the entire
+  speed advantage.
+- **Scene selection runs first in the filter chain**, so frames that are about
+  to be thrown away are never resized
 
 Omitting `--end` simply leaves `-t` off the command, so ffmpeg runs to the end
 of the file. An `--end` beyond the real duration needs no special handling
