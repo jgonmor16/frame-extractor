@@ -9,6 +9,7 @@ Usage: python3 -m frame_extractor.extractor VIDEO OUTPUT_DIR
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 from frame_extractor.exceptions import (
     FFmpegExecutionError,
@@ -19,10 +20,28 @@ from frame_extractor.exceptions import (
 )
 from frame_extractor.ffmpeg_utils import (
     Progress,
+    parse_frame_times,
     probe_video_info,
     require_binaries,
     run_ffmpeg,
 )
+
+
+class Frame(NamedTuple):
+    """One extracted frame.
+
+    Attributes:
+        path:Where the image was written.
+        index: Position in this extraction, counting from zero.
+        timestamp: Seconds into the source video, or None when
+            timestamps were not requested. Recovering them costs an
+            extra pass over the range, so it is opt-in.
+    """
+
+    path: Path
+    index: int
+    timestamp: float | None
+
 
 SUPPORTED_FORMATS = ("png", "jpg")
 
@@ -221,6 +240,7 @@ def build_ffmpeg_command(
     scene_threshold: float | None = None,
     scale: str | None = None,
     report_progress: bool = False,
+    report_times: bool = False,
 ) -> list[str]:
     """Build the ffmpeg argument list for one extraction.
 
@@ -237,7 +257,9 @@ def build_ffmpeg_command(
         ffmpeg_path,
         "-hide_banner",
         "-loglevel",
-        "error",
+        # shoingo logs at info level, so asking for timestamps means accepting
+        # the rest of ffmpeg's chatter and filtering is out.
+        "info" if report_times else "error",
     ]
     if report_progress:
         command += ["-progress", "pipe:1", "-nostats"]
@@ -262,6 +284,8 @@ def build_ffmpeg_command(
         filters.append(
             f"scale={_DERIVED.get(width, width)}:{_DERIVED.get(height, height)}"
         )
+    if report_times:
+        filters.append("showinfo")
     if filters:
         command += ["-vf", ",".join(filters)]
     if image_format == "jpg":
@@ -290,7 +314,8 @@ def extract_frames(
     scene_threshold: float | None = None,
     scale: str | None = None,
     on_progress: Callable[[Progress], None] | None = None,
-) -> list[Path]:
+    timestamps: bool = False,
+) -> list[Frame]:
     """Extract every frame of a video as an image within [start_time, end_time).
 
     Args:
@@ -317,9 +342,13 @@ def extract_frames(
             ratio, as in ``"640:auto"``. ``None`` keeps the source size.
         on_progress: Called with a :class:`Progress`as ffmpeg decodes.
             The library never prints; reporting is the caller's to do.
+        timestamps: Record where each frame sits in the source. Costs an
+            extra pass over the range, so each Frame's timestamp is None
+            unless this is set.
 
     Returns:
-        Sorted list of the extracted frames.
+        The extracted frames in playback order, each carrying its path, its
+        index and its timestamp when one was requested.
 
     Raises:
         VideoFileError: If the input video does not exist.
@@ -370,6 +399,7 @@ def extract_frames(
         scene_threshold=scene_threshold,
         scale=scale,
         report_progress=on_progress is not None,
+        report_times=timestamps,
     )
 
     requested = min(end_time, duration) if end_time else duration
@@ -385,4 +415,18 @@ def extract_frames(
             returncode=result.returncode,
             stderr=result.stderr.strip(),
         )
-    return sorted(output_dir.glob(f"frame_*.{image_format}"))
+
+    paths = sorted(output_dir.glob(f"frame_*.{image_format}"))
+    times: list[float] = (
+        parse_frame_times(result.stderr, len(paths), start_time)
+        if timestamps
+        else []
+    )
+    return [
+        Frame(
+            path=path,
+            index=index,
+            timestamp=times[index] if index < len(times) else None,
+        )
+        for index, path in enumerate(paths)
+    ]

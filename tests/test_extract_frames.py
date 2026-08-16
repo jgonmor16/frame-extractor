@@ -1,5 +1,6 @@
 """Tests for extract_frames."""
 
+import csv
 import hashlib
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ import frame_extractor.extractor as ef
 from frame_extractor import (
     FFmpegExecutionError,
     FFmpegNotFoundError,
+    Frame,
     InvalidOutputOptionError,
     InvalidTimeRangeError,
     OutputDirectoryError,
@@ -25,6 +27,7 @@ from frame_extractor.ffmpeg_utils import (
     VideoInfo,
     _parse_frame_rate,
     _parse_progress_block,
+    parse_frame_times,
     probe_video_info,
     require_binaries,
 )
@@ -102,7 +105,7 @@ def test_seek_is_frame_accurate(sample_video: Path, tmp_path: Path) -> None:
     """
     everything = extract_frames(sample_video, tmp_path / "all")
     seeked = extract_frames(sample_video, tmp_path / "seeked", 1.0, None)
-    assert _digest(seeked[0]) == _digest(everything[10])
+    assert _digest(seeked[0].path) == _digest(everything[10].path)
 
 
 def test_creates_missing_output_directory(
@@ -124,8 +127,8 @@ def test_returns_sorted_zero_padded_paths(
 ) -> None:
     """Frames are returned in playback order, with names that are sorted"""
     frames = extract_frames(sample_video, tmp_path / "out", 0.0, 0.5)
-    assert frames == sorted(frames)
-    assert [f.name for f in frames[:3]] == [
+    assert [f.path for f in frames] == sorted(f.path for f in frames)
+    assert [f.path.name for f in frames[:3]] == [
         "frame_000001.png",
         "frame_000002.png",
         "frame_000003.png",
@@ -297,7 +300,7 @@ class TestOutputFormats:
     ) -> None:
         frames = extract_frames(sample_video, tmp_path / "out", 0.0, 0.5)
         assert len(frames) == 5
-        assert all(f.suffix == ".png" for f in frames)
+        assert all(f.path.suffix == ".png" for f in frames)
 
     def test_jpeg_output_uses_jpg_extension(
         self, sample_video: Path, tmp_path: Path
@@ -306,8 +309,8 @@ class TestOutputFormats:
             sample_video, tmp_path / "out", 0.0, 0.5, image_format="jpg"
         )
         assert len(frames) == 5
-        assert all(f.suffix == ".jpg" for f in frames)
-        assert frames[0].name == "frame_000001.jpg"
+        assert all(f.path.suffix == ".jpg" for f in frames)
+        assert frames[0].path.name == "frame_000001.jpg"
 
     def test_lower_quality_produces_smaller_files(
         self, sample_video: Path, tmp_path: Path
@@ -331,8 +334,8 @@ class TestOutputFormats:
             image_format="jpg",
             jpeg_quality=31,
         )
-        worst_bytes = sum(f.stat().st_size for f in worst)
-        best_bytes = sum(f.stat().st_size for f in best)
+        worst_bytes = sum(f.path.stat().st_size for f in worst)
+        best_bytes = sum(f.path.stat().st_size for f in best)
         assert worst_bytes < best_bytes
 
     def test_quality_does_not_affect_png(
@@ -347,8 +350,8 @@ class TestOutputFormats:
             image_format="png",
             jpeg_quality=31,
         )
-        assert [f.read_bytes() for f in default] == [
-            f.read_bytes() for f in explicit
+        assert [f.path.read_bytes() for f in default] == [
+            f.path.read_bytes() for f in explicit
         ]
 
     @pytest.mark.parametrize(
@@ -486,7 +489,7 @@ class TestOverwriteGuard:
     ) -> None:
         output_dir = tmp_path / "out"
         original = extract_frames(sample_video, output_dir, 0.0, 0.5)
-        digests_before = [f.read_bytes() for f in original]
+        digests_before = [f.path.read_bytes() for f in original]
 
         with pytest.raises(OutputDirectoryError):
             extract_frames(sample_video, output_dir, 1.0, 1.5)
@@ -679,7 +682,7 @@ class TestFrameSampling:
             sample_video, tmp_path / "out", fps=1.0, image_format="jpg"
         )
         assert len(frames) == 2
-        assert all(f.suffix == ".jpg" for f in frames)
+        assert all(f.path.suffix == ".jpg" for f in frames)
 
     @pytest.mark.parametrize(
         "fps",
@@ -948,9 +951,9 @@ class TestProgressReporting:
             0.5,
             on_progress=lambda _: None,
         )
-        assert [p.name for p in plain] == [p.name for p in watched]
-        assert [p.read_bytes() for p in plain] == [
-            p.read_bytes() for p in watched
+        assert [p.path.name for p in plain] == [p.path.name for p in watched]
+        assert [p.path.read_bytes() for p in plain] == [
+            p.path.read_bytes() for p in watched
         ]
 
     def test_errors_still_carry_stderr(
@@ -1009,7 +1012,7 @@ class TestKeyframeSelection:
             sample_video, tmp_path / "out", keyframes=True, scale="32:auto"
         )
         assert frames
-        assert _dimensions(frames[0]) == (32, 32)
+        assert _dimensions(frames[0].path) == (32, 32)
 
     def test_flag_is_an_input_option(self) -> None:
         """-skip_frame must precede -i, or the decoder never sees it."""
@@ -1170,3 +1173,193 @@ class TestSelectionModesAreExclusive:
         )
         assert main() == 0
         assert "frame(s)" in capsys.readouterr().out
+
+
+class TestFrameResult:
+    """extract_frames returns Frames, not bare paths."""
+
+    def test_returns_frames(self, sample_video: Path, tmp_path: Path) -> None:
+        frames = extract_frames(sample_video, tmp_path / "out", 0.0, 0.5)
+        assert all(isinstance(frame, Frame) for frame in frames)
+
+    def test_carries_path_and_index(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        frames = extract_frames(sample_video, tmp_path / "out", 0.0, 0.5)
+        assert [frame.index for frame in frames] == list(range(5))
+        assert frames[0].path.name == "frame_000001.png"
+        assert all(frame.path.exists() for frame in frames)
+
+    def test_timestamp_is_none_unless_requested(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        """Recovering them costs a pass, so nobody pays for it by default."""
+        frames = extract_frames(sample_video, tmp_path / "out", 0.0, 0.5)
+        assert all(frame.timestamp is None for frame in frames)
+
+    def test_frames_stay_in_playback_order(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        frames = extract_frames(sample_video, tmp_path / "out", 0.0, 1.0)
+        assert [f.path for f in frames] == sorted(f.path for f in frames)
+
+
+class TestTimestamps:
+    """Where each frame sits in the source."""
+
+    def test_every_frame_is_timed(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        frames = extract_frames(sample_video, tmp_path / "out", timestamps=True)
+        assert all(frame.timestamp is not None for frame in frames)
+
+    def test_timestamps_are_absolute_not_relative_to_the_seek(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        """showinfo reports from the seek point, so the offset is added."""
+        frames = extract_frames(
+            sample_video, tmp_path / "out", 1.0, 1.5, timestamps=True
+        )
+        assert frames[0].timestamp == pytest.approx(1.0)
+        times = [f.timestamp for f in frames]
+        assert all(1.0 <= t < 1.5 for t in times)  # type: ignore[operator]
+
+    def test_timestamps_increase(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        frames = extract_frames(sample_video, tmp_path / "out", timestamps=True)
+        times = [frame.timestamp for frame in frames]
+        assert times == sorted(times)  # type: ignore[type-var]
+
+    def test_sampled_frames_land_on_the_requested_rate(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        frames = extract_frames(
+            sample_video, tmp_path / "out", fps=2.0, timestamps=True
+        )
+        assert [f.timestamp for f in frames] == pytest.approx(
+            [0.0, 0.5, 1.0, 1.5]
+        )
+
+    def test_keyframes_are_timed(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        """Their spacing is uneven, so computing from an index cannot work."""
+        frames = extract_frames(
+            sample_video, tmp_path / "out", keyframes=True, timestamps=True
+        )
+        assert frames
+        assert all(frame.timestamp is not None for frame in frames)
+
+    def test_one_timestamp_per_written_file(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        """showinfo runs upstream of the muxer and can over-report."""
+        frames = extract_frames(
+            sample_video, tmp_path / "out", 0.0, 1.0, fps=3.0, timestamps=True
+        )
+        assert len(frames) == len(list((tmp_path / "out").glob("*.png")))
+        assert all(frame.timestamp is not None for frame in frames)
+
+    def test_flag_is_absent_by_default(self) -> None:
+        command = build_ffmpeg_command("ffmpeg", Path("in.mp4"), Path("out"))
+        assert "showinfo" not in " ".join(command)
+        assert command[command.index("-loglevel") + 1] == "error"
+
+    def test_flag_raises_the_log_level(self) -> None:
+        """showinfo logs at info, so error level would discard it."""
+        command = build_ffmpeg_command(
+            "ffmpeg", Path("in.mp4"), Path("out"), report_times=True
+        )
+        assert command[command.index("-loglevel") + 1] == "info"
+        assert command[command.index("-vf") + 1].endswith("showinfo")
+
+    def test_showinfo_runs_last_in_the_chain(self) -> None:
+        """It must see the frames that reach the muxer, not earlier ones."""
+        command = build_ffmpeg_command(
+            "ffmpeg",
+            Path("in.mp4"),
+            Path("out"),
+            fps=1.0,
+            scale="64:auto",
+            report_times=True,
+        )
+        assert command[command.index("-vf") + 1] == (
+            "fps=1.0,scale=64:-1,showinfo"
+        )
+
+
+class TestParseFrameTimes:
+    """Turning showinfo's output into timestamps."""
+
+    def test_trims_the_surplus_tail(self) -> None:
+        """The muxer discards frames the filter already reported."""
+        stderr = "pts_time:0 pts_time:1 pts_time:2 pts_time:3 pts_time:4"
+        assert parse_frame_times(stderr, 3, 0.0) == [0.0, 1.0, 2.0]
+
+    def test_adds_the_seek_offset(self) -> None:
+        stderr = "pts_time:0 pts_time:1"
+        assert parse_frame_times(stderr, 2, 5.0) == [5.0, 6.0]
+
+    def test_no_output_gives_no_times(self) -> None:
+        assert parse_frame_times("nothing here", 3, 0.0) == []
+
+    def test_fewer_reported_than_written_is_not_an_error(self) -> None:
+        """Should not happen, but is not worth crashing over."""
+        assert parse_frame_times("pts_time:1", 5, 0.0) == [1.0]
+
+
+class TestManifest:
+    """--manifest writes the mapping out."""
+
+    def test_writes_a_row_per_frame(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        manifest = tmp_path / "frames.csv"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "frame-extractor",
+                str(sample_video),
+                str(tmp_path / "out"),
+                "--end",
+                "0.5",
+                "--manifest",
+                str(manifest),
+            ],
+        )
+        assert main() == 0
+
+        rows = list(csv.DictReader(manifest.open(newline="")))
+        assert len(rows) == 5
+        assert rows[0]["index"] == "0"
+        assert float(rows[0]["timestamp"]) == pytest.approx(0.0)
+
+    def test_implies_timestamps(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Asking for the mapping without the data would be pointless."""
+        manifest = tmp_path / "frames.csv"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "frame-extractor",
+                str(sample_video),
+                str(tmp_path / "out"),
+                "--end",
+                "0.5",
+                "--manifest",
+                str(manifest),
+            ],
+        )
+        main()
+        rows = list(csv.DictReader(manifest.open(newline="")))
+        assert all(row["timestamp"] for row in rows)
