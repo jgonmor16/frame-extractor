@@ -1363,3 +1363,122 @@ class TestManifest:
         main()
         rows = list(csv.DictReader(manifest.open(newline="")))
         assert all(row["timestamp"] for row in rows)
+
+
+class TestEmptyResultNote:
+    """Writing nothing is a real answer, but should not look like a bug."""
+
+    @pytest.mark.parametrize(
+        ("extra", "expected"),
+        [
+            pytest.param(
+                ["--scenes", "0.99"], "heuristic", id="scenes-too-strict"
+            ),
+            pytest.param(
+                ["--keyframes", "--start", "1.5"],
+                "encoder's choice",
+                id="no-keyframe-in-range",
+            ),
+            pytest.param(
+                ["--fps", "0.1", "--start", "1.0", "--end", "1.05"],
+                "longer range",
+                id="rate-too-low-for-range",
+            ),
+            pytest.param(
+                ["--start", "1.99", "--end", "1.995"],
+                "--start and --end",
+                id="range-holds-no-frame",
+            ),
+        ],
+    )
+    def test_note_names_the_likely_cause(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        extra: list[str],
+        expected: str,
+    ) -> None:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "frame-extractor",
+                str(sample_video),
+                str(tmp_path / "out"),
+                *extra,
+            ],
+        )
+        assert main() == 0
+
+        captured = capsys.readouterr()
+        assert "Extracted 0 frame(s)" in captured.out
+        assert expected in captured.err
+
+    def test_an_empty_result_is_not_a_failure(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A threshold nothing meets is a valid request with no matches."""
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "frame-extractor",
+                str(sample_video),
+                str(tmp_path / "out"),
+                "--scenes",
+                "0.99",
+            ],
+        )
+        assert main() == 0
+        assert "error" not in capsys.readouterr().err
+
+    def test_no_note_when_frames_were_written(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "frame-extractor",
+                str(sample_video),
+                str(tmp_path / "out"),
+                "--end",
+                "0.5",
+            ],
+        )
+        assert main() == 0
+        assert "note:" not in capsys.readouterr().err
+
+    def test_the_note_goes_to_stderr(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """So the summary line stays pipeable."""
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "frame-extractor",
+                str(sample_video),
+                str(tmp_path / "out"),
+                "--scenes",
+                "0.99",
+            ],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "note:" not in captured.out
+        assert "note:" in captured.err

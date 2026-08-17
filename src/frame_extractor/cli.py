@@ -48,6 +48,36 @@ def _clear_report(drawn: bool) -> None:
         print("\r\033[K", end="", file=sys.stderr, flush=True)
 
 
+def _no_frames_note(args: argparse.Namespace) -> str:
+    """Explain an empty result, which each selection mode reaches its own way.
+
+    Writing nothing is a legitimate answer rather than a failure, so the
+    exit code stays zero; the note exists because an empty directory
+    otherwise looks like something went wrong.
+    """
+    if args.scenes is not None:
+        return (
+            f"no frame differed from the one before it by more than "
+            f"{args.scenes}. Scene detection is a heuristic, so try a "
+            "lower threshold or use --fps for a predictable count."
+        )
+    if args.keyframes:
+        return (
+            "no key frame falls in the requested range. Their spacing is "
+            "the encoder's choice, not yours, so a wider range may be "
+            "needed."
+        )
+    if args.fps is not None:
+        return (
+            f"--fps {args.fps} selected nothing from the requested range. "
+            "A rate this low needs a longer range to land on a frame."
+        )
+    return (
+        "the requested range contains no frames. Check --start and --end "
+        "against the video's duration."
+    )
+
+
 def _write_manifest(destination: Path, frames: list[Frame]) -> None:
     """Write one row per frame, so the mapping outlives the process."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +242,8 @@ def main() -> int:
     if args.manifest is not None:
         _write_manifest(args.manifest, frames)
     print(f"Extracted {len(frames)} frame(s) to '{args.output_dir}'")
+    if not frames:
+        print(f"note: {_no_frames_note(args)}", file=sys.stderr)
     return 0
 
 
