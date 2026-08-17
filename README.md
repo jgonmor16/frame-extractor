@@ -181,7 +181,7 @@ try:
 except FrameExtractorError as exc:
     print(f"extraction failed: {exc}")
 else:
-    print(f"wrote {len(frames)} frames, first is {frames[0].name}")
+    print(f"wrote {len(frames)} frames, first is {frames[0].path.name}")
 ```
 
 `extract_frames` returns a sorted `list[Frame]`, so the frames come back in

@@ -42,7 +42,7 @@ def require_binaries() -> tuple[str, str]:
 
 
 class VideoInfo(NamedTuple):
-    """What a ffprobe call provides about a video.
+    """What one ffprobe call provides about a video.
 
     Attributes:
         duration: Length in seconds

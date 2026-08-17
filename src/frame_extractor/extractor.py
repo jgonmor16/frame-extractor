@@ -24,6 +24,7 @@ from frame_extractor.ffmpeg_utils import (
     probe_video_info,
     require_binaries,
     run_ffmpeg,
+    strip_showinfo,
 )
 
 
@@ -31,7 +32,7 @@ class Frame(NamedTuple):
     """One extracted frame.
 
     Attributes:
-        path:Where the image was written.
+        path: Where the image was written.
         index: Position in this extraction, counting from zero.
         timestamp: Seconds into the source video, or None when
             timestamps were not requested. Recovering them costs an
@@ -257,13 +258,18 @@ def build_ffmpeg_command(
         ffmpeg_path,
         "-hide_banner",
         "-loglevel",
-        # shoingo logs at info level, so asking for timestamps means accepting
-        # the rest of ffmpeg's chatter and filtering is out.
+        # showinfo logs at info level, so asking for timestamps means accepting
+        # the rest of ffmpeg's chatter and filtering it out.
         "info" if report_times else "error",
     ]
     if report_progress:
+        # Machine-readable updates on stdout; -nostats silences the
+        # human-readable ones that would otherwise go to stderr.
         command += ["-progress", "pipe:1", "-nostats"]
     if keyframes:
+        # An input option: it tells the decoder to skip non-key frames
+        # rather than filtering them out afterwards, which is why it is
+        # so much faster than selecting on key_frame downstream.
         command += ["-skip_frame", "nokey"]
     command += [
         "-ss",
@@ -275,16 +281,18 @@ def build_ffmpeg_command(
     if end_time is not None:
         command += ["-t", f"{end_time - start_time:.6f}"]
     filters = []
-    if fps is not None:
-        filters.append(f"fps={fps}")
     if scene_threshold is not None:
         filters.append(f"select='gt(scene,{scene_threshold})'")
+    if fps is not None:
+        filters.append(f"fps={fps}")
     if scale is not None:
         width, height = scale.split(":")
         filters.append(
             f"scale={_DERIVED.get(width, width)}:{_DERIVED.get(height, height)}"
         )
     if report_times:
+        # Last in the chain, so it sees exactly the frames that reach
+        # the muxer rather than the ones an earlier filter discarded.
         filters.append("showinfo")
     if filters:
         command += ["-vf", ",".join(filters)]
@@ -340,7 +348,7 @@ def extract_frames(
         scale: Output size as ``"WIDTH:HEIGHT"``. Either side may be
             ``"auto"`` to derive it from the other and the source aspect
             ratio, as in ``"640:auto"``. ``None`` keeps the source size.
-        on_progress: Called with a :class:`Progress`as ffmpeg decodes.
+        on_progress: Called with a :class:`Progress` as ffmpeg decodes.
             The library never prints; reporting is the caller's to do.
         timestamps: Record where each frame sits in the source. Costs an
             extra pass over the range, so each Frame's timestamp is None
@@ -413,7 +421,7 @@ def extract_frames(
         raise FFmpegExecutionError(
             f"ffmpeg could not extract frames from '{video_path}'",
             returncode=result.returncode,
-            stderr=result.stderr.strip(),
+            stderr=strip_showinfo(result.stderr).strip(),
         )
 
     paths = sorted(output_dir.glob(f"frame_*.{image_format}"))
