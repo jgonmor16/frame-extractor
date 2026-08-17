@@ -208,9 +208,7 @@ def _frame_number(path: Path) -> int:
 
 def _sorted_frames(output_dir: Path, image_format: str) -> list[Path]:
     """Return this run's frame files in playback order."""
-    return sorted(
-        output_dir.glob(f"frame_*.{image_format}"), key=_frame_number
-    )
+    return sorted(output_dir.glob(f"frame_*.{image_format}"), key=_frame_number)
 
 
 def _prepare_output_directory(

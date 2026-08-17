@@ -768,10 +768,10 @@ class TestFrameRateCeiling:
             extract_frames(sample_video, tmp_path / "out", fps=fps)
 
     def test_a_rounding_slip_is_tolerated(
-            self,
-            sample_video: Path,
-            tmp_path: Path,
-            monkeypatch: pytest.MonkeyPatch
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Asking for 30 against NTSC's 29.97 is a slip, not a mistake."""
         placeholder = tmp_path / "placeholder.mp4"
@@ -790,7 +790,7 @@ class TestFrameRateCeiling:
         self,
         sample_video: Path,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Some containers report no usable rate; not the user's fault."""
         placeholder = tmp_path / "placeholder.mp4"
