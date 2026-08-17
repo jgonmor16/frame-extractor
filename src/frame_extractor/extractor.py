@@ -196,6 +196,23 @@ def _validate_request(
         )
 
 
+def _frame_number(path: Path) -> int:
+    """Return the number ffmpeg gave a frame file.
+
+    Sorting the names directly breaks past 999999: the %06d pattern is a
+    minimum width, not a maximum, so ffmpeg widens the field rather than
+    wrapping and frame_1000000 sorts before frame_999999.
+    """
+    return int(path.stem.rsplit("_", 1)[1])
+
+
+def _sorted_frames(output_dir: Path, image_format: str) -> list[Path]:
+    """Return this run's frame files in playback order."""
+    return sorted(
+        output_dir.glob(f"frame_*.{image_format}"), key=_frame_number
+    )
+
+
 def _prepare_output_directory(
     output_dir: Path,
     image_format: str,
@@ -424,7 +441,7 @@ def extract_frames(
             stderr=strip_showinfo(result.stderr).strip(),
         )
 
-    paths = sorted(output_dir.glob(f"frame_*.{image_format}"))
+    paths = _sorted_frames(output_dir, image_format)
     times: list[float] = (
         parse_frame_times(result.stderr, len(paths), start_time)
         if timestamps

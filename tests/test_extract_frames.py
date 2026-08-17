@@ -21,7 +21,11 @@ from frame_extractor import (
     extract_frames,
 )
 from frame_extractor.cli import main
-from frame_extractor.extractor import build_ffmpeg_command
+from frame_extractor.extractor import (
+    _frame_number,
+    _sorted_frames,
+    build_ffmpeg_command,
+)
 from frame_extractor.ffmpeg_utils import (
     Progress,
     VideoInfo,
@@ -764,7 +768,10 @@ class TestFrameRateCeiling:
             extract_frames(sample_video, tmp_path / "out", fps=fps)
 
     def test_a_rounding_slip_is_tolerated(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+            self,
+            sample_video: Path,
+            tmp_path: Path,
+            monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Asking for 30 against NTSC's 29.97 is a slip, not a mistake."""
         placeholder = tmp_path / "placeholder.mp4"
@@ -780,7 +787,10 @@ class TestFrameRateCeiling:
             extract_frames(placeholder, tmp_path / "out", fps=30.0)
 
     def test_an_unknown_source_rate_skips_the_check(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Some containers report no usable rate; not the user's fault."""
         placeholder = tmp_path / "placeholder.mp4"
@@ -831,7 +841,9 @@ class TestProbeVideoInfo:
         else:
             assert result == pytest.approx(expected, abs=0.001)
 
-    def test_unreadable_file_still_raises(self, tmp_path: Path) -> None:
+    def test_unreadable_file_still_raises(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
         _, ffprobe_path = require_binaries()
         broken = tmp_path / "broken.mp4"
         broken.write_text("this is definitely not a video")
@@ -1482,3 +1494,55 @@ class TestEmptyResultNote:
         captured = capsys.readouterr()
         assert "note:" not in captured.out
         assert "note:" in captured.err
+
+
+class TestFrameOrdering:
+    """Frames come back in playback order, past six digits included."""
+
+    def test_numbers_beyond_six_digits_sort_after(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        """ffmpeg widens %06d rather than wrapping, so 1000000 follows
+        999999 numerically while sorting before it as a string.
+        """
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        for number in (999998, 999999, 1000000, 1000001):
+            (output_dir / f"frame_{number:06d}.png").touch()
+
+        ordered = _sorted_frames(output_dir, "png")
+
+        assert [_frame_number(path) for path in ordered] == [
+            999998,
+            999999,
+            1000000,
+            1000001,
+        ]
+
+    def test_sorting_names_directly_would_be_wrong(
+        self, tmp_path: Path
+    ) -> None:
+        """The bug this guards against, stated as a test."""
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        for number in (999999, 1000000):
+            (output_dir / f"frame_{number:06d}.png").touch()
+
+        lexicographic = sorted(output_dir.glob("frame_*.png"))
+        numeric = _sorted_frames(output_dir, "png")
+
+        assert lexicographic != numeric
+        assert numeric[0].name == "frame_999999.png"
+
+    def test_ordinary_numbering_is_unaffected(
+        self, sample_video: Path, tmp_path: Path
+    ) -> None:
+        frames = extract_frames(sample_video, tmp_path / "out", 0.0, 1.0)
+        assert [frame.path for frame in frames] == sorted(
+            frame.path for frame in frames
+        )
+        assert [frame.index for frame in frames] == list(range(10))
+
+    def test_frame_number_reads_the_suffix(self, tmp_path: Path) -> None:
+        assert _frame_number(tmp_path / "frame_000042.png") == 42
+        assert _frame_number(tmp_path / "frame_1000000.jpg") == 1000000
