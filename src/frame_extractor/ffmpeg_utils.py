@@ -4,6 +4,7 @@ Kept separate from the extraction logic so that talking to the external
 binaries can be tested and replaced independently of how frames are produced.
 """
 
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -41,7 +42,7 @@ def require_binaries() -> tuple[str, str]:
 
 
 class VideoInfo(NamedTuple):
-    """What a ffprobe call provides about a video.
+    """What one ffprobe call provides about a video.
 
     Attributes:
         duration: Length in seconds
@@ -238,4 +239,44 @@ def run_ffmpeg(
         returncode=process.returncode,
         stdout="",
         stderr=stderr,
+    )
+
+
+_SHOWINFO_TIME = re.compile(r"pts_time:([\d.]+)")
+
+
+def parse_frame_times(
+    stderr: str, written: int, start_time: float
+) -> list[float]:
+    """Recover the timestamp of each written frame from showinfo output.
+
+    The filter sits upstream of the muxer, so when a duration bounds the
+    range it reports the frames it saw rather than the ones that survived
+    truncation. The surplus is always at the end, so the list is trimmed
+    to the number of files actually written.
+
+    Times are relative to the seek position, so start_time is added back.
+
+    Args:
+        stderr: Captured ffmpeg output, at info level or louder.
+        written: How many files the extraction produced.
+        start_time: The seek offset to add to each reported time.
+
+    Returns:
+        One absolute timestamp per written frame, in extraction order.
+        Shorter than ``written`` if ffmpeg reported fewer than it wrote,
+        which should not happen but is not worth crashing over.
+    """
+    reported = [float(match) for match in _SHOWINFO_TIME.findall(stderr)]
+    return [round(t + start_time, 6) for t in reported[:written]]
+
+
+def strip_showinfo(stderr: str) -> str:
+    """Remove showinfo's per-frame chatter from captured ffmpeg output.
+
+    Requesting timestamps means running at info level, which buries any
+    real diagnosis under one line per frame.
+    """
+    return "\n".join(
+        line for line in stderr.splitlines() if "Parsed_showinfo" not in line
     )

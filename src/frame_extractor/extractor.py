@@ -9,6 +9,7 @@ Usage: python3 -m frame_extractor.extractor VIDEO OUTPUT_DIR
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 from frame_extractor.exceptions import (
     FFmpegExecutionError,
@@ -19,10 +20,32 @@ from frame_extractor.exceptions import (
 )
 from frame_extractor.ffmpeg_utils import (
     Progress,
+    parse_frame_times,
     probe_video_info,
     require_binaries,
     run_ffmpeg,
+    strip_showinfo,
 )
+
+
+class Frame(NamedTuple):
+    """One extracted frame.
+
+    Attributes:
+        path: Where the image was written.
+        index: Position in this extraction, counting from zero.
+        timestamp: Seconds into the source video, or None when
+            timestamps were not requested. Recovering them costs an
+            extra pass over the range, so it is opt-in.
+    """
+
+    path: Path
+    # Shadows tuple.index, which is meaningless on a Frame. Losing the
+    # method costs nothing; renaming the field to avoid it would make
+    # every read site worse.
+    index: int  # type: ignore[assignment]
+    timestamp: float | None
+
 
 SUPPORTED_FORMATS = ("png", "jpg")
 
@@ -176,6 +199,21 @@ def _validate_request(
         )
 
 
+def _frame_number(path: Path) -> int:
+    """Return the number ffmpeg gave a frame file.
+
+    Sorting the names directly breaks past 999999: the %06d pattern is a
+    minimum width, not a maximum, so ffmpeg widens the field rather than
+    wrapping and frame_1000000 sorts before frame_999999.
+    """
+    return int(path.stem.rsplit("_", 1)[1])
+
+
+def _sorted_frames(output_dir: Path, image_format: str) -> list[Path]:
+    """Return this run's frame files in playback order."""
+    return sorted(output_dir.glob(f"frame_*.{image_format}"), key=_frame_number)
+
+
 def _prepare_output_directory(
     output_dir: Path,
     image_format: str,
@@ -221,6 +259,7 @@ def build_ffmpeg_command(
     scene_threshold: float | None = None,
     scale: str | None = None,
     report_progress: bool = False,
+    report_times: bool = False,
 ) -> list[str]:
     """Build the ffmpeg argument list for one extraction.
 
@@ -237,11 +276,18 @@ def build_ffmpeg_command(
         ffmpeg_path,
         "-hide_banner",
         "-loglevel",
-        "error",
+        # showinfo logs at info level, so asking for timestamps means accepting
+        # the rest of ffmpeg's chatter and filtering it out.
+        "info" if report_times else "error",
     ]
     if report_progress:
+        # Machine-readable updates on stdout; -nostats silences the
+        # human-readable ones that would otherwise go to stderr.
         command += ["-progress", "pipe:1", "-nostats"]
     if keyframes:
+        # An input option: it tells the decoder to skip non-key frames
+        # rather than filtering them out afterwards, which is why it is
+        # so much faster than selecting on key_frame downstream.
         command += ["-skip_frame", "nokey"]
     command += [
         "-ss",
@@ -253,15 +299,19 @@ def build_ffmpeg_command(
     if end_time is not None:
         command += ["-t", f"{end_time - start_time:.6f}"]
     filters = []
-    if fps is not None:
-        filters.append(f"fps={fps}")
     if scene_threshold is not None:
         filters.append(f"select='gt(scene,{scene_threshold})'")
+    if fps is not None:
+        filters.append(f"fps={fps}")
     if scale is not None:
         width, height = scale.split(":")
         filters.append(
             f"scale={_DERIVED.get(width, width)}:{_DERIVED.get(height, height)}"
         )
+    if report_times:
+        # Last in the chain, so it sees exactly the frames that reach
+        # the muxer rather than the ones an earlier filter discarded.
+        filters.append("showinfo")
     if filters:
         command += ["-vf", ",".join(filters)]
     if image_format == "jpg":
@@ -290,7 +340,8 @@ def extract_frames(
     scene_threshold: float | None = None,
     scale: str | None = None,
     on_progress: Callable[[Progress], None] | None = None,
-) -> list[Path]:
+    timestamps: bool = False,
+) -> list[Frame]:
     """Extract every frame of a video as an image within [start_time, end_time).
 
     Args:
@@ -315,11 +366,15 @@ def extract_frames(
         scale: Output size as ``"WIDTH:HEIGHT"``. Either side may be
             ``"auto"`` to derive it from the other and the source aspect
             ratio, as in ``"640:auto"``. ``None`` keeps the source size.
-        on_progress: Called with a :class:`Progress`as ffmpeg decodes.
+        on_progress: Called with a :class:`Progress` as ffmpeg decodes.
             The library never prints; reporting is the caller's to do.
+        timestamps: Record where each frame sits in the source. Costs an
+            extra pass over the range, so each Frame's timestamp is None
+            unless this is set.
 
     Returns:
-        Sorted list of the extracted frames.
+        The extracted frames in playback order, each carrying its path, its
+        index and its timestamp when one was requested.
 
     Raises:
         VideoFileError: If the input video does not exist.
@@ -370,6 +425,7 @@ def extract_frames(
         scene_threshold=scene_threshold,
         scale=scale,
         report_progress=on_progress is not None,
+        report_times=timestamps,
     )
 
     requested = min(end_time, duration) if end_time else duration
@@ -383,6 +439,20 @@ def extract_frames(
         raise FFmpegExecutionError(
             f"ffmpeg could not extract frames from '{video_path}'",
             returncode=result.returncode,
-            stderr=result.stderr.strip(),
+            stderr=strip_showinfo(result.stderr).strip(),
         )
-    return sorted(output_dir.glob(f"frame_*.{image_format}"))
+
+    paths = _sorted_frames(output_dir, image_format)
+    times: list[float] = (
+        parse_frame_times(result.stderr, len(paths), start_time)
+        if timestamps
+        else []
+    )
+    return [
+        Frame(
+            path=path,
+            index=index,
+            timestamp=times[index] if index < len(times) else None,
+        )
+        for index, path in enumerate(paths)
+    ]

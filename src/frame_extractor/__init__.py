@@ -30,15 +30,17 @@ from frame_extractor.extractor import (
     MAX_JPEG_QUALITY,
     MIN_JPEG_QUALITY,
     SUPPORTED_FORMATS,
+    Frame,
     extract_frames,
 )
 from frame_extractor.ffmpeg_utils import Progress
 
-__version__ = "1.2.0"
+__version__ = "2.0.0"
 
 __all__ = [
     # The one thing most callers need.
     "extract_frames",
+    "Frame",
     "Progress",
     # Catch the base class to handle any expected failure; the rest are for
     # telling them apart.

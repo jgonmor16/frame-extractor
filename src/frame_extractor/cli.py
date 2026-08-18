@@ -5,6 +5,7 @@ stdout in it, and this module can be pointed at by the console script.
 """
 
 import argparse
+import csv
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from frame_extractor import (
     MIN_JPEG_QUALITY,
     SUPPORTED_FORMATS,
     FFmpegExecutionError,
+    Frame,
     FrameExtractorError,
     Progress,
     extract_frames,
@@ -44,6 +46,46 @@ def _clear_report(drawn: bool) -> None:
     """
     if drawn:
         print("\r\033[K", end="", file=sys.stderr, flush=True)
+
+
+def _no_frames_note(args: argparse.Namespace) -> str:
+    """Explain an empty result, which each selection mode reaches its own way.
+
+    Writing nothing is a legitimate answer rather than a failure, so the
+    exit code stays zero; the note exists because an empty directory
+    otherwise looks like something went wrong.
+    """
+    if args.scenes is not None:
+        return (
+            f"no frame differed from the one before it by more than "
+            f"{args.scenes}. Scene detection is a heuristic, so try a "
+            "lower threshold or use --fps for a predictable count."
+        )
+    if args.keyframes:
+        return (
+            "no key frame falls in the requested range. Their spacing is "
+            "the encoder's choice, not yours, so a wider range may be "
+            "needed."
+        )
+    if args.fps is not None:
+        return (
+            f"--fps {args.fps} selected nothing from the requested range. "
+            "A rate this low needs a longer range to land on a frame."
+        )
+    return (
+        "the requested range contains no frames. Check --start and --end "
+        "against the video's duration."
+    )
+
+
+def _write_manifest(destination: Path, frames: list[Frame]) -> None:
+    """Write one row per frame, so the mapping outlives the process."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["path", "index", "timestamp"])
+        for frame in frames:
+            writer.writerow([frame.path, frame.index, frame.timestamp])
 
 
 def main() -> int:
@@ -133,6 +175,24 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--timestamps",
+        action="store_true",
+        help=(
+            "Record where each frame sits in the source. Costs an extra "
+            "pass over the range, so it is off by default."
+        ),
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        metavar="CSV",
+        help=(
+            "Write a CSV of path, index, and timestamp to CSV. Implies "
+            "--timestamps."
+        ),
+    )
+    parser.add_argument(
         "--no-progress",
         action="store_true",
         help=(
@@ -163,6 +223,7 @@ def main() -> int:
             scene_threshold=args.scenes,
             scale=args.scale,
             on_progress=_report if show_progress else None,
+            timestamps=args.timestamps or args.manifest is not None,
         )
 
     except FFmpegExecutionError as exc:
@@ -178,7 +239,11 @@ def main() -> int:
         return 1
 
     _clear_report(show_progress)
+    if args.manifest is not None:
+        _write_manifest(args.manifest, frames)
     print(f"Extracted {len(frames)} frame(s) to '{args.output_dir}'")
+    if not frames:
+        print(f"note: {_no_frames_note(args)}", file=sys.stderr)
     return 0
 
 
