@@ -40,7 +40,10 @@ class Frame(NamedTuple):
     """
 
     path: Path
-    index: int
+    # Shadows tuple.index, which is meaningless on a Frame. Losing the
+    # method costs nothing; renaming the field to avoid it would make
+    # every read site worse.
+    index: int  # type: ignore[assignment]
     timestamp: float | None
 
 
