@@ -5,6 +5,7 @@ import hashlib
 import shutil
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from frame_extractor import (
     FFmpegExecutionError,
     FFmpegNotFoundError,
     Frame,
+    IncompleteExtractionWarning,
     InvalidOutputOptionError,
     InvalidTimeRangeError,
     OutputDirectoryError,
@@ -31,9 +33,11 @@ from frame_extractor.ffmpeg_utils import (
     VideoInfo,
     _parse_frame_rate,
     _parse_progress_block,
+    decode_problems,
     parse_frame_times,
     probe_video_info,
     require_binaries,
+    run_ffmpeg,
 )
 
 
@@ -1546,3 +1550,168 @@ class TestFrameOrdering:
     def test_frame_number_reads_the_suffix(self, tmp_path: Path) -> None:
         assert _frame_number(tmp_path / "frame_000042.png") == 42
         assert _frame_number(tmp_path / "frame_1000000.jpg") == 1000000
+
+
+@pytest.fixture
+def damaged_video(sample_video: Path, tmp_path: Path) -> Path:
+    """A copy of the sample with a chunk of its stream overwritten.
+
+    ffmpeg skips what it cannot decode and exits successfully, so this
+    produces fewer frames than the source holds without failing.
+    """
+    damaged = tmp_path / "damaged.mp4"
+    data = bytearray(sample_video.read_bytes())
+    midpoint = len(data) // 2
+    data[midpoint : midpoint + 400] = b"\xde\xad\xbe\xef" * 100
+    damaged.write_bytes(bytes(data))
+    return damaged
+
+
+class TestDecodeProblems:
+    """Separating ffmpeg's complaints from its ordinary chatter."""
+
+    def test_a_clean_run_reports_nothing(self) -> None:
+        assert decode_problems("") == []
+
+    def test_component_messages_are_collected(self) -> None:
+        stderr = (
+            "[h264 @ 0x55] Invalid NAL unit size (-1 > 26).\n"
+            "[vist#0:0/h264 @ 0x66] Error submitting packet to decoder\n"
+        )
+        assert len(decode_problems(stderr)) == 2
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param(
+                "[out#0/image2 @ 0x55] video:4236kB muxing overhead: unknown",
+                id="muxing-summary",
+            ),
+            pytest.param(
+                "[Parsed_showinfo_1 @ 0x55] n:0 pts:0 pts_time:0",
+                id="showinfo",
+            ),
+            pytest.param(
+                "[swscaler @ 0x55] deprecated pixel format used",
+                id="swscaler-notice",
+            ),
+        ],
+    )
+    def test_benign_components_are_ignored(self, line: str) -> None:
+        """These appear on a healthy run at info level."""
+        assert decode_problems(line) == []
+
+    def test_lines_without_a_component_are_ignored(self) -> None:
+        """Stream summaries and deprecation notices carry no prefix."""
+        stderr = (
+            "-vsync is deprecated. Use -fps_mode\n"
+            "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'in.mp4':\n"
+            "  Duration: 00:00:10.00, start: 0.000000, bitrate: 37 kb/s\n"
+        )
+        assert decode_problems(stderr) == []
+
+
+class TestDamagedSource:
+    """Damage makes ffmpeg drop frames and still exit zero."""
+
+    def test_extraction_warns(
+        self, damaged_video: Path, tmp_path: Path
+    ) -> None:
+        with pytest.warns(IncompleteExtractionWarning, match="damaged"):
+            extract_frames(damaged_video, tmp_path / "out")
+
+    def test_the_frames_that_survived_are_returned(
+        self, damaged_video: Path, tmp_path: Path, sample_frame_count: int
+    ) -> None:
+        """Extracting what is readable is a legitimate thing to want."""
+        with pytest.warns(IncompleteExtractionWarning):
+            frames = extract_frames(damaged_video, tmp_path / "out")
+        assert 0 < len(frames) < sample_frame_count
+
+    def test_the_warning_can_be_promoted_to_an_error(
+        self, damaged_video: Path, tmp_path: Path
+    ) -> None:
+        """So a pipeline that cannot accept a partial result may stop."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", IncompleteExtractionWarning)
+            with pytest.raises(IncompleteExtractionWarning):
+                extract_frames(damaged_video, tmp_path / "out")
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            pytest.param({}, id="default"),
+            pytest.param({"fps": 5.0}, id="fps"),
+            pytest.param({"keyframes": True}, id="keyframes"),
+            pytest.param({"scale": "32:auto"}, id="scale"),
+            pytest.param({"image_format": "jpg"}, id="jpeg"),
+            pytest.param({"timestamps": True}, id="timestamps"),
+            pytest.param(
+                {"image_format": "jpg", "timestamps": True},
+                id="jpeg-and-timestamps",
+            ),
+        ],
+    )
+    def test_a_healthy_source_never_warns(
+        self, sample_video: Path, tmp_path: Path, kwargs: dict[str, object]
+    ) -> None:
+        """Info-level logging must not be mistaken for damage."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", IncompleteExtractionWarning)
+            extract_frames(
+                sample_video,
+                tmp_path / "out",
+                **kwargs,  # type: ignore[arg-type]
+            )
+
+
+class TestPartialOutputIsCleared:
+    """A failed run should leave nothing behind."""
+
+    def test_failure_removes_what_was_written(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Otherwise the overwrite guard blocks the obvious retry."""
+        output_dir = tmp_path / "out"
+        real_run = run_ffmpeg
+
+        def fail_after_writing(*args: object, **kwargs: object) -> object:
+            result = real_run(*args, **kwargs)  # type: ignore[arg-type]
+            return subprocess.CompletedProcess(
+                args=result.args, returncode=1, stdout="", stderr="boom"
+            )
+
+        monkeypatch.setattr(
+            "frame_extractor.extractor.run_ffmpeg", fail_after_writing
+        )
+
+        with pytest.raises(FFmpegExecutionError):
+            extract_frames(sample_video, output_dir, 0.0, 0.5)
+
+        assert not list(output_dir.glob("frame_*.png"))
+
+    def test_a_retry_is_not_blocked(
+        self,
+        sample_video: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        output_dir = tmp_path / "out"
+        real_run = run_ffmpeg
+
+        def fail_once(*args: object, **kwargs: object) -> object:
+            result = real_run(*args, **kwargs)  # type: ignore[arg-type]
+            return subprocess.CompletedProcess(
+                args=result.args, returncode=1, stdout="", stderr="boom"
+            )
+
+        monkeypatch.setattr("frame_extractor.extractor.run_ffmpeg", fail_once)
+        with pytest.raises(FFmpegExecutionError):
+            extract_frames(sample_video, output_dir, 0.0, 0.5)
+
+        monkeypatch.setattr("frame_extractor.extractor.run_ffmpeg", real_run)
+        frames = extract_frames(sample_video, output_dir, 0.0, 0.5)
+        assert len(frames) == 5

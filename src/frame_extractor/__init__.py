@@ -21,6 +21,7 @@ from frame_extractor.exceptions import (
     FFmpegExecutionError,
     FFmpegNotFoundError,
     FrameExtractorError,
+    IncompleteExtractionWarning,
     InvalidOutputOptionError,
     InvalidTimeRangeError,
     OutputDirectoryError,
@@ -51,6 +52,7 @@ __all__ = [
     "InvalidTimeRangeError",
     "OutputDirectoryError",
     "VideoFileError",
+    "IncompleteExtractionWarning",
     # Useful for validating input before calling, or for building a UI.
     "SUPPORTED_FORMATS",
     "MIN_JPEG_QUALITY",
