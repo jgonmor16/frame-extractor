@@ -36,7 +36,7 @@ from frame_extractor.extractor import (
 )
 from frame_extractor.ffmpeg_utils import Progress
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 __all__ = [
     # The one thing most callers need.
