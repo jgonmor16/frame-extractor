@@ -7,12 +7,14 @@ Usage: python3 -m frame_extractor.extractor VIDEO OUTPUT_DIR
 """
 
 import re
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
 from frame_extractor.exceptions import (
     FFmpegExecutionError,
+    IncompleteExtractionWarning,
     InvalidOutputOptionError,
     InvalidTimeRangeError,
     OutputDirectoryError,
@@ -20,6 +22,7 @@ from frame_extractor.exceptions import (
 )
 from frame_extractor.ffmpeg_utils import (
     Progress,
+    decode_problems,
     parse_frame_times,
     probe_video_info,
     require_binaries,
@@ -436,6 +439,9 @@ def extract_frames(
         seconds_total=max(requested - start_time, 0.0),
     )
     if result.returncode != 0:
+        # Whatever landed before the failure is a partial run
+        for partial in _sorted_frames(output_dir, image_format):
+            partial.unlink()
         raise FFmpegExecutionError(
             f"ffmpeg could not extract frames from '{video_path}'",
             returncode=result.returncode,
@@ -443,6 +449,16 @@ def extract_frames(
         )
 
     paths = _sorted_frames(output_dir, image_format)
+
+    problems = decode_problems(result.stderr)
+    if problems:
+        warnings.warn(
+            f"ffmpeg reported {len(problems)} decode problem(s) and "
+            f"wrote {len(paths)} frame(s) anyway; the source may be "
+            f"damaged. First: {problems[0]}",
+            IncompleteExtractionWarning,
+            stacklevel=2,
+        )
     times: list[float] = (
         parse_frame_times(result.stderr, len(paths), start_time)
         if timestamps
