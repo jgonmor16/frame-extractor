@@ -280,3 +280,41 @@ def strip_showinfo(stderr: str) -> str:
     return "\n".join(
         line for line in stderr.splitlines() if "Parsed_showinfo" not in line
     )
+
+
+# ffmpeg prefixes every component's messages with its name and address.
+# The informational output it writes at info level does not carry this
+# shape, so it separates real complaints from stream summaries.
+_COMPONENT_MESSAGE = re.compile(r"\[([^\]]+) @ 0x[0-9a-f]+\]")
+
+
+# Components that speak up on a healthy run. Requesting timestamps forces
+# info-level logging, which is where these appear; at error level ffmpeg
+# says nothing at all when nothing is wrong.
+_BENIGN_COMPONENTS = ("out#", "Parsed_", "swscaler")
+
+
+def decode_problems(stderr: str) -> list[str]:
+    """Return the complaints ffmpeg made while still exiting successfully.
+
+    Damaged footage produces decoder errors that ffmpeg logs and then
+    works around, skipping what it cannot read. The run reports success
+    having written fewer frames than the source holds.
+
+    Args:
+        stderr: Captured ffmpeg output.
+
+    Returns:
+        One entry per complaint, in the order ffmpeg made them. Empty
+        when the run was clean.
+    """
+    problems = []
+    for line in stderr.splitlines():
+        match = _COMPONENT_MESSAGE.search(line)
+        if match is None:
+            continue
+        component = match.group(1)
+        if component.startswith(_BENIGN_COMPONENTS):
+            continue
+        problems.append(line.strip())
+    return problems

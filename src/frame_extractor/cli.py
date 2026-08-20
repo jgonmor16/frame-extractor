@@ -7,6 +7,7 @@ stdout in it, and this module can be pointed at by the console script.
 import argparse
 import csv
 import sys
+import warnings
 from pathlib import Path
 
 from frame_extractor import (
@@ -210,21 +211,23 @@ def main() -> int:
     show_progress = not args.no_progress and sys.stderr.isatty()
 
     try:
-        frames = extract_frames(
-            args.video,
-            args.output_dir,
-            start_time=args.start,
-            end_time=args.end,
-            image_format=args.format,
-            jpeg_quality=args.jpeg_quality,
-            overwrite=args.overwrite,
-            fps=args.fps,
-            keyframes=args.keyframes,
-            scene_threshold=args.scenes,
-            scale=args.scale,
-            on_progress=_report if show_progress else None,
-            timestamps=args.timestamps or args.manifest is not None,
-        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            frames = extract_frames(
+                args.video,
+                args.output_dir,
+                start_time=args.start,
+                end_time=args.end,
+                image_format=args.format,
+                jpeg_quality=args.jpeg_quality,
+                overwrite=args.overwrite,
+                fps=args.fps,
+                keyframes=args.keyframes,
+                scene_threshold=args.scenes,
+                scale=args.scale,
+                on_progress=_report if show_progress else None,
+                timestamps=args.timestamps or args.manifest is not None,
+            )
 
     except FFmpegExecutionError as exc:
         _clear_report(show_progress)
@@ -242,6 +245,8 @@ def main() -> int:
     if args.manifest is not None:
         _write_manifest(args.manifest, frames)
     print(f"Extracted {len(frames)} frame(s) to '{args.output_dir}'")
+    for warning in caught:
+        print(f"warning: {warning.message}", file=sys.stderr)
     if not frames:
         print(f"note: {_no_frames_note(args)}", file=sys.stderr)
     return 0

@@ -46,3 +46,18 @@ class FFmpegExecutionError(FrameExtractorError):
         super().__init__(message)
         self.returncode = returncode
         self.stderr = stderr
+
+
+class IncompleteExtractionWarning(UserWarning):
+    """ffmpeg reported decode problems but still exited successfully.
+
+    Damaged footage makes ffmpeg skip what it cannot decode and carry on,
+    so the extraction looks like it worked while quietly producing fewer
+    frames than the source holds. This is a warning rather than an error
+    because extracting what is readable from known-damaged footage is a
+    legitimate thing to want; silence about it is not.
+
+    Suppress it with :func:`warnings.filterwarnings`, or promote it to an
+    error with ``python -W error::...IncompleteExtractionWarning`` if a
+    partial result should stop a pipeline.
+    """
